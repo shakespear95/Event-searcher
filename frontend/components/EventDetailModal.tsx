@@ -33,7 +33,7 @@ import {
 } from './ui/dialog'
 import { Separator } from './ui/separator'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { formatDate, formatTime } from '@/lib/utils'
+import { formatDate, formatTime, getCategoryImage } from '@/lib/utils'
 
 interface EventDetailModalProps {
   event: {
@@ -97,6 +97,7 @@ export function EventDetailModal({
 
   const { day, month, fullDate } = formatDate(event.date, locale)
   const CategoryIcon = getCategoryIcon(event.category)
+  const eventImage = event.image || getCategoryImage(event.category, event.title)
 
   const handleTicketAction = () => {
     if (!event.tickets) return
@@ -200,7 +201,7 @@ export function EventDetailModal({
         {/* Hero Image */}
         <div className="relative h-48 sm:h-64 md:h-80 flex-shrink-0">
           <img
-            src={event.image || '/placeholder-event.jpg'}
+            src={eventImage}
             alt={event.title}
             className="w-full h-full object-cover"
           />

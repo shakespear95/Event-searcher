@@ -24,7 +24,7 @@ import { Button } from './ui/button'
 import { EventDetailModal } from './EventDetailModal'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { EventDisplayProps } from '@/types'
-import { formatDate } from '@/lib/utils'
+import { formatDate, getCategoryImage } from '@/lib/utils'
 
 const getCategoryIcon = (category: string) => {
   const categoryLower = category.toLowerCase()
@@ -65,6 +65,7 @@ export function EventCard({
   const locale = language === 'de' ? 'de-DE' : language === 'fr' ? 'fr-FR' : language === 'es' ? 'es-ES' : 'en-US'
   const { day, month } = formatDate(date, locale)
   const CategoryIcon = getCategoryIcon(category)
+  const eventImage = image || getCategoryImage(category, title)
 
   const eventData = {
     id,
@@ -93,7 +94,7 @@ export function EventCard({
           <div className="flex gap-3 p-3">
             <div className="relative w-20 h-24 flex-shrink-0 overflow-hidden rounded-lg">
               <img
-                src={image || '/placeholder-event.jpg'}
+                src={eventImage}
                 alt={title}
                 className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
               />
@@ -173,7 +174,7 @@ export function EventCard({
         <div className="hidden md:flex gap-0">
           <div className="relative w-32 h-36 flex-shrink-0 overflow-hidden">
             <img
-              src={image || '/placeholder-event.jpg'}
+              src={eventImage}
               alt={title}
               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
             />
