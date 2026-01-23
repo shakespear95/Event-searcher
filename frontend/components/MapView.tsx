@@ -8,7 +8,7 @@ import { Button } from './ui/button'
 import { EventDetailModal } from './EventDetailModal'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { EventDisplayProps } from '@/types'
-import { formatDate, formatTime } from '@/lib/utils'
+import { formatDate, formatTime, getCategoryImage } from '@/lib/utils'
 
 interface MapViewProps {
   events: EventDisplayProps[]
@@ -216,7 +216,7 @@ export function MapView({ events }: MapViewProps) {
               <div className="flex gap-4">
                 <div className="flex-shrink-0">
                   <img
-                    src={selectedEvent.image || '/placeholder-event.jpg'}
+                    src={selectedEvent.image || getCategoryImage(selectedEvent.category, selectedEvent.title)}
                     alt={selectedEvent.title}
                     className="w-20 h-20 sm:w-24 sm:h-24 rounded-lg object-cover"
                   />

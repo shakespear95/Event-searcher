@@ -9,10 +9,9 @@ export const metadata: Metadata = {
   title: "What's UP - Find Unique Events",
   description: 'Discover unique events in your area',
   manifest: '/manifest.json',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'default',
-    title: "What's UP",
+  icons: {
+    icon: 'https://placehold.co/32x32/3B82F6/white?text=W',
+    apple: 'https://placehold.co/180x180/3B82F6/white?text=W',
   },
 }
 
@@ -31,8 +30,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <link rel="apple-touch-icon" href="/icon-192.svg" />
-        <link rel="icon" href="/icon-192.svg" type="image/svg+xml" />
+        <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className={inter.className}>
         <LanguageProvider defaultLanguage="en">

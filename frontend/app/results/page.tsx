@@ -6,7 +6,7 @@ import { Header } from '@/components/Header'
 import { EventCard } from '@/components/EventCard'
 import { MapView } from '@/components/MapView'
 import { searchEvents } from '@/lib/api'
-import { computeDateRange, mapPriceRangeToBackend, mapCategoryToBackend } from '@/lib/utils'
+import { computeDateRange, mapPriceRangeToBackend, mapCategoryToBackend, getCategoryImage } from '@/lib/utils'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { EventResult, EventDisplayProps, SearchRequest } from '@/types'
 import { Loader2, SearchX, RefreshCw } from 'lucide-react'
@@ -46,7 +46,7 @@ function ResultsContent() {
       exactAddress: event.location.address,
       date: startDate.toISOString().split('T')[0],
       time: timeStr,
-      image: event.image_url || '/placeholder-event.jpg',
+      image: event.image_url || getCategoryImage(event.category, event.event_name),
       category: event.category,
       description: event.description,
       price: event.pricing.is_free
