@@ -1,0 +1,47 @@
+# FastAPI & Server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Pydantic & Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+email-validator>=2.1.0
+
+# LLM Clients
+anthropic>=0.18.0
+openai>=1.12.0
+google-generativeai>=0.4.0
+
+# Search APIs
+httpx>=0.26.0
+aiohttp>=3.9.0
+
+# Scraper
+playwright>=1.41.0
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+fake-useragent>=1.4.0
+
+# Caching & Rate Limiting
+redis>=5.0.0
+slowapi>=0.1.9
+
+# Database (Supabase)
+supabase>=2.3.0
+
+# Utilities
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+structlog>=24.1.0
+python-dateutil>=2.8.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Development
+black>=24.1.0
+ruff>=0.1.0
+mypy>=1.8.0

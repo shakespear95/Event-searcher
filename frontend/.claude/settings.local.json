@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c \"echo hello\")",
+      "Bash(powershell.exe -NoProfile -Command \"Write-Host ''Test output''\")"
+    ]
+  }
+}
