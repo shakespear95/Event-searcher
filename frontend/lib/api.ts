@@ -2,6 +2,11 @@ import { SearchRequest, SearchResponse, Category, FilterOptions } from '@/types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+// Debug: Log the API URL being used (remove after debugging)
+if (typeof window !== 'undefined') {
+  console.log('[API] Using backend URL:', API_BASE);
+}
+
 /**
  * Search for events using the FastAPI backend
  */

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ping:*)",
+      "Bash(curl:*)",
+      "Bash(python -m uvicorn:*)",
+      "Bash(python -m pip:*)",
+      "Bash(python test_scraper.py:*)",
+      "Bash(del \"C:\\\\Users\\\\shakespear\\\\OneDrive - University of Liechtenstein\\\\Desktop\\\\whatsApp\\\\backend\\\\test_scraper.py\")",
+      "Bash(python:*)",
+      "Bash(timeout /t 5 /nobreak)"
+    ]
+  }
+}
