@@ -30,7 +30,14 @@ from app.services.llm.gemini import GeminiLLM
 from app.services.search.perplexity import PerplexitySearch
 from app.services.search.serpapi import SerpAPISearch
 from app.services.search.merger import SearchMerger, MergedSearchResults
-from app.services.scraper.engine import ScraperEngine
+
+# Optional scraper import (requires playwright which may not be installed)
+try:
+    from app.services.scraper.engine import ScraperEngine
+    SCRAPER_AVAILABLE = True
+except ImportError:
+    ScraperEngine = None
+    SCRAPER_AVAILABLE = False
 
 logger = get_logger("agent.orchestrator")
 
@@ -82,6 +89,9 @@ class AgentOrchestrator:
 
     async def _init_scraper(self) -> None:
         """Initialize scraper lazily."""
+        if not SCRAPER_AVAILABLE:
+            logger.debug("Scraper not available (playwright not installed)")
+            return
         if not self.scraper:
             self.scraper = ScraperEngine()
             await self.scraper.start()
@@ -294,6 +304,10 @@ class AgentOrchestrator:
         self, merged_results: MergedSearchResults, state: GlobalState
     ) -> None:
         """Optionally scrape URLs for additional event details."""
+        if not SCRAPER_AVAILABLE:
+            logger.debug("Scraping skipped (playwright not installed)")
+            return
+
         # Only scrape URLs that need enrichment (missing title or details)
         urls_to_scrape = [
             r.url
