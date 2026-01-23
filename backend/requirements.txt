@@ -17,17 +17,14 @@ google-generativeai>=0.4.0
 httpx>=0.26.0
 aiohttp>=3.9.0
 
-# Scraper
-playwright>=1.41.0
+# HTML Parsing (for search results)
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
-fake-useragent>=1.4.0
 
-# Caching & Rate Limiting
-redis>=5.0.0
+# Rate Limiting
 slowapi>=0.1.9
 
-# Database (Supabase)
+# Database (Supabase) - Optional
 supabase>=2.3.0
 
 # Utilities
@@ -35,13 +32,3 @@ python-dotenv>=1.0.0
 tenacity>=8.2.0
 structlog>=24.1.0
 python-dateutil>=2.8.0
-
-# Testing
-pytest>=8.0.0
-pytest-asyncio>=0.23.0
-pytest-cov>=4.1.0
-
-# Development
-black>=24.1.0
-ruff>=0.1.0
-mypy>=1.8.0
