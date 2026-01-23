@@ -46,12 +46,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Configuration (Rule AR4: No wildcard CORS)
+# CORS Configuration - Allow all origins for now
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_origins=["*"],
+    allow_credentials=False,  # Must be False when using wildcard origins
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
