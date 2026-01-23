@@ -223,7 +223,11 @@ class SerpAPISearch:
 
         # First, try regular Google search for event listings
         try:
-            full_query = f"{event_query} what's on calendar listings"
+            # Build more specific query targeting event aggregators and venue calendars
+            full_query = f"{event_query} tickets eventbrite meetup"
+            if date_from:
+                # Add month/year context for better date-specific results
+                full_query = f"{full_query} 2026"
             logger.info(f"[SERPAPI] Step 1: Regular Google Search with query: {full_query}")
             google_result = await self.search(
                 query=full_query,

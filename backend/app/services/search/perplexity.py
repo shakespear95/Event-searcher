@@ -221,23 +221,22 @@ Format each event with: Name, Date/Time, Location, Description, Source URL"""
             },
         )
 
-        # Build detailed query - ask for MANY specific events
-        event_query = f"""Search for at least 15-20 upcoming {category} events in {location}.
+        # Build detailed query - flexible about quantity, strict about quality
+        event_query = f"""Find upcoming {category} events in {location} starting from {date_from}.
 
-Date: {date_from} onwards
-{"Prioritize lesser-known, unique, hidden gem events over mainstream popular ones." if hidden_gems else ""}
+{"Focus on unique local events, hidden gems, and lesser-known happenings rather than mainstream tourist attractions." if hidden_gems else "Include both popular and local events."}
 
-For EACH event found, provide:
-1. Event Name
-2. Date and Time
-3. Venue Name and Address
-4. Description (1-2 sentences)
-5. Event Website or Ticket URL
+For each event you find, include:
+- Event name/title
+- Specific date (REQUIRED - skip events without dates)
+- Time if available
+- Venue name and location
+- Brief description
+- Source URL or ticket link
 
-Search local event calendars, venue websites, ticketing platforms, and community event listings.
-Include events from: local theaters, galleries, museums, clubs, community centers, outdoor venues.
+Search event calendars, local venue websites, ticketing platforms (Eventbrite, etc.), and community listings.
 
-IMPORTANT: List as many individual events as possible. Format each event clearly."""
+IMPORTANT: Only include events with confirmed dates. Quality over quantity - it's better to list 5 events with complete information than 20 with missing details."""
 
         logger.info(f"[PERPLEXITY] ========== SEARCH_EVENTS START ==========")
         logger.info(f"[PERPLEXITY] Category: {category}, Location: {location}")

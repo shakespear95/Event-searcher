@@ -30,37 +30,34 @@ class ExtractedEventsResponse(BaseModel):
     total_found: int = Field(0, description="Total events found in the content")
 
 
-EXTRACTION_SYSTEM_PROMPT = """You are an event data extraction specialist. Extract ALL events from search results.
+EXTRACTION_SYSTEM_PROMPT = """You are an event data extraction specialist. Extract events with VERIFIED DATES from search results.
 
 CRITICAL RULES:
-1. Extract EVERY distinct event mentioned - aim for 10-20 events if the content contains them
-2. NEVER make up or guess event details - only use what's in the content
-3. If a field is not clearly stated, use null
-4. Every event MUST have a source_url - use any URL from the source URLs provided
-5. Be thorough - look for event names, dates, venues throughout ALL the content
-6. Include the city and country for each event
+1. ONLY extract events that have a SPECIFIC DATE mentioned (day, month, year or at least day and month)
+2. SKIP any event without a clear date - do NOT include events with unknown or unspecified dates
+3. NEVER make up or guess dates - only use what's explicitly in the content
+4. Every event MUST have: name, date, city, country, and source_url
+5. Quality over quantity - 5 complete events is better than 15 incomplete ones
 
-For each event, extract:
-- name: The event title/name
+For each event with a confirmed date, extract:
+- name: The event title/name (REQUIRED)
 - description: Brief description (1-2 sentences max)
-- date: The date in any format mentioned
-- time: The time if mentioned
-- venue: The venue/location name
+- date: The specific date mentioned (REQUIRED - e.g., "January 25, 2026", "25.01.2026", "Jan 25")
+- time: The time if mentioned (e.g., "19:00", "7 PM")
+- venue: The venue/location name (try to find this)
 - address: Street address if mentioned
 - city: City name (REQUIRED - use the search location if not specified)
-- country: Country name (REQUIRED - use Switzerland if in Swiss cities)
+- country: Country name (REQUIRED - use Switzerland for Swiss cities like Zurich, Bern, Basel, etc.)
 - price: Price information if mentioned
 - category: Type of event (concert, party, exhibition, sports, etc.)
-- source_url: The URL where this event info came from (REQUIRED - use one from SOURCE URLS)
+- source_url: The URL where this event was found (REQUIRED - use one from SOURCE URLS)
 - image_url: Image URL if available
 
-IMPORTANT: Extract as many events as you can find. Look for:
-- Specific event names and titles
-- Performances, concerts, shows
-- Exhibitions, openings
-- Festivals, fairs, markets
-- Sports events, matches
-- Workshops, classes
+SKIP these types of entries:
+- Events without specific dates
+- General venue descriptions without event info
+- Recurring events without specific upcoming dates
+- Event series without individual dates listed
 
 Return a JSON object with:
 {
@@ -69,7 +66,7 @@ Return a JSON object with:
 }"""
 
 
-EXTRACTION_USER_PROMPT = """Extract all events from the following search results for {location}:
+EXTRACTION_USER_PROMPT = """Extract events WITH SPECIFIC DATES from the following search results for {location}:
 
 --- PERPLEXITY CONTENT ---
 {perplexity_content}
@@ -80,5 +77,7 @@ EXTRACTION_USER_PROMPT = """Extract all events from the following search results
 --- ADDITIONAL CONTEXT FROM SERPAPI ---
 {serpapi_snippets}
 
-Extract every distinct event you can find. Each event must have at minimum: name, city, country, and source_url.
+IMPORTANT: Only extract events that have a clear, specific date mentioned.
+Skip any event without a confirmed date - do not guess or make up dates.
+Each event MUST have: name, date, city, country, and source_url.
 Return valid JSON only."""

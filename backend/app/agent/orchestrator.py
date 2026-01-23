@@ -414,12 +414,20 @@ class AgentOrchestrator:
 
             logger.info(f"[GEMINI] Extraction successful! Found {len(extracted.events)} events")
 
-            # Convert ExtractedEvent to EventResult
+            # Convert ExtractedEvent to EventResult - filter out events without dates
             events = []
+            skipped_no_date = 0
             for i, extracted_event in enumerate(extracted.events):
                 logger.info(f"[GEMINI]   Event {i+1}: {extracted_event.name[:50] if extracted_event.name else 'No name'}...")
                 logger.info(f"[GEMINI]     Date: {extracted_event.date}, Venue: {extracted_event.venue}")
                 logger.info(f"[GEMINI]     Source: {extracted_event.source_url[:60] if extracted_event.source_url else 'No URL'}")
+
+                # Skip events without dates
+                if not extracted_event.date or extracted_event.date.lower() in ['none', 'null', 'unknown', 'tbd', 'n/a', '']:
+                    logger.info(f"[GEMINI]     SKIPPED - no valid date")
+                    skipped_no_date += 1
+                    continue
+
                 try:
                     event = self._create_event_from_extracted(
                         extracted_event, request, source_urls, i
@@ -435,6 +443,9 @@ class AgentOrchestrator:
                 except Exception as e:
                     state.add_warning(f"Failed to convert extracted event {i}: {e}")
                     logger.warning(f"[GEMINI] Failed to convert event: {e}")
+
+            if skipped_no_date > 0:
+                logger.info(f"[GEMINI] Skipped {skipped_no_date} events without valid dates")
 
             logger.info(f"========== GEMINI PROCESSING COMPLETE ==========")
             logger.info(f"[GEMINI] Final event count: {len(events)}")
