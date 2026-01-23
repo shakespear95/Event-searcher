@@ -7,6 +7,8 @@ const nextConfig = {
         hostname: '**',
       },
     ],
+    // Explicitly allow placeholder image domains
+    domains: ['picsum.photos', 'images.unsplash.com'],
   },
 }
 
