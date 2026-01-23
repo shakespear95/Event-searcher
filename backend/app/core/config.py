@@ -25,16 +25,16 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
 
     # LLM API Keys
-    anthropic_api_key: str = Field(..., description="Claude API key")
-    openai_api_key: str = Field(..., description="OpenAI API key")
-    google_api_key: str = Field(..., description="Gemini API key")
+    anthropic_api_key: str = Field(default="", description="Claude API key")
+    openai_api_key: str = Field(default="", description="OpenAI API key (optional)")
+    google_api_key: str = Field(default="", description="Gemini API key")
 
     # Search API Keys
-    perplexity_api_key: str = Field(..., description="Perplexity API key")
-    serpapi_api_key: str = Field(..., description="SerpAPI key")
+    perplexity_api_key: str = Field(default="", description="Perplexity API key")
+    serpapi_api_key: str = Field(default="", description="SerpAPI key")
 
-    # Weather API
-    openweather_api_key: str = Field(..., description="OpenWeatherMap API key")
+    # Weather API (optional)
+    openweather_api_key: str = Field(default="", description="OpenWeatherMap API key (optional)")
 
     # Proxy Configuration
     proxy_service: str = "brightdata"
@@ -43,9 +43,9 @@ class Settings(BaseSettings):
     proxy_host: str = ""
     proxy_port: str = ""
 
-    # Supabase
-    supabase_url: str = Field(..., description="Supabase project URL")
-    supabase_key: str = Field(..., description="Supabase anon key")
+    # Supabase (optional - not used yet)
+    supabase_url: str = Field(default="", description="Supabase project URL (optional)")
+    supabase_key: str = Field(default="", description="Supabase anon key (optional)")
     supabase_service_key: str = ""
 
     # Redis
