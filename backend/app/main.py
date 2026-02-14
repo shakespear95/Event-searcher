@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.endpoints import health, search
+from app.api.endpoints import health, search, users
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 
@@ -46,11 +46,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Configuration - Allow all origins for now
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # Must be False when using wildcard origins
+    allow_origins=settings.allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -108,6 +108,7 @@ async def log_requests(request: Request, call_next):
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(search.router, prefix="/api/v1", tags=["Search"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 
 
 # Root endpoint

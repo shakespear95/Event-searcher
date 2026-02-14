@@ -1,4 +1,5 @@
-import { SearchRequest, SearchResponse, Category, FilterOptions } from '@/types';
+import { SearchRequest, SearchResponse, Category, FilterOptions, UserProfile, SearchHistoryItem, FavoriteItem } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -7,15 +8,25 @@ if (typeof window !== 'undefined') {
   console.log('[API] Using backend URL:', API_BASE);
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    };
+  }
+  return { 'Content-Type': 'application/json' };
+}
+
 /**
  * Search for events using the FastAPI backend
  */
 export async function searchEvents(params: SearchRequest): Promise<SearchResponse> {
+  const headers = await getAuthHeaders();
   const response = await fetch(`${API_BASE}/api/v1/search`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(params),
   });
 
@@ -97,4 +108,70 @@ export async function reverseGeocode(
     console.error('Reverse geocoding error:', error);
     return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
   }
+}
+
+// --- User API functions ---
+
+export async function getProfile(): Promise<UserProfile> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me`, { headers });
+  if (!response.ok) throw new Error('Failed to fetch profile');
+  return response.json();
+}
+
+export async function updateProfile(data: Partial<UserProfile>): Promise<UserProfile> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to update profile');
+  return response.json();
+}
+
+export async function getSearchHistory(limit = 50): Promise<{ items: SearchHistoryItem[]; total: number }> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me/search-history?limit=${limit}`, { headers });
+  if (!response.ok) throw new Error('Failed to fetch search history');
+  return response.json();
+}
+
+export async function clearSearchHistory(): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me/search-history`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!response.ok) throw new Error('Failed to clear search history');
+}
+
+export async function getFavorites(): Promise<{ items: FavoriteItem[]; total: number }> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me/favorites`, { headers });
+  if (!response.ok) throw new Error('Failed to fetch favorites');
+  return response.json();
+}
+
+export async function addFavorite(eventId: string, eventData: Record<string, unknown> = {}): Promise<FavoriteItem> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me/favorites`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ event_id: eventId, event_data: eventData }),
+  });
+  if (!response.ok) {
+    if (response.status === 409) throw new Error('Already in favorites');
+    throw new Error('Failed to add favorite');
+  }
+  return response.json();
+}
+
+export async function removeFavorite(eventId: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  const response = await fetch(`${API_BASE}/api/v1/users/me/favorites/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+    headers,
+  });
+  if (!response.ok) throw new Error('Failed to remove favorite');
 }

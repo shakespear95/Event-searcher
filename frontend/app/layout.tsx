@@ -4,6 +4,7 @@ import './globals.css'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { LanguageProvider } from '@/contexts/LanguageContext'
 import { UserPreferencesProvider } from '@/contexts/UserPreferencesContext'
+import { AuthProvider } from '@/contexts/AuthContext'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -36,11 +37,13 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <LanguageProvider defaultLanguage="en">
-            <UserPreferencesProvider>
-              {children}
-            </UserPreferencesProvider>
-          </LanguageProvider>
+          <AuthProvider>
+            <LanguageProvider defaultLanguage="en">
+              <UserPreferencesProvider>
+                {children}
+              </UserPreferencesProvider>
+            </LanguageProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

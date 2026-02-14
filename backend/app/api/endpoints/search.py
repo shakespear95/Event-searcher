@@ -2,10 +2,14 @@
 Search API endpoints.
 Main entry point for event discovery.
 """
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.core.auth import AuthenticatedUser, optional_user
 from app.core.logging import get_logger
+from app.core.supabase import get_supabase_client
 from app.schemas.search import SearchRequest, SearchResponse
 
 router = APIRouter()
@@ -24,7 +28,10 @@ def get_orchestrator() -> AgentOrchestrator:
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_events(request: SearchRequest):
+async def search_events(
+    request: SearchRequest,
+    user: Optional[AuthenticatedUser] = Depends(optional_user),
+):
     """
     Search for events based on query and filters.
 
@@ -47,6 +54,28 @@ async def search_events(request: SearchRequest):
     try:
         orchestrator = get_orchestrator()
         response = await orchestrator.search(request)
+
+        # Save to search history if user is authenticated
+        if user:
+            try:
+                client = get_supabase_client()
+                client.table("search_history").insert({
+                    "user_id": user.id,
+                    "query": request.query,
+                    "location": request.location,
+                    "category": request.category,
+                    "radius_km": request.radius_km,
+                    "results_count": len(response.events),
+                    "filters": {
+                        "date_from": request.date_from,
+                        "date_to": request.date_to,
+                        "price_range": request.price_range,
+                        "hidden_gems": request.hidden_gems,
+                    },
+                }).execute()
+            except Exception as e:
+                logger.warning("Failed to save search history", error=str(e))
+
         return response
 
     except Exception as e:

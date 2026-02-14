@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
-import { ArrowLeft, Globe, Moon, Bell, Search } from 'lucide-react'
+import { ArrowLeft, Globe, Moon, Bell, Search, User, LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -18,8 +18,10 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useUserPreferences } from '@/contexts/UserPreferencesContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { Language } from '@/types'
 import { useEffect, useState } from 'react'
+import { AuthModal } from '@/components/AuthModal'
 
 const languageOptions: { value: Language; label: string }[] = [
   { value: 'en', label: 'English' },
@@ -33,7 +35,9 @@ export default function SettingsPage() {
   const { language, setLanguage, t } = useLanguage()
   const { theme, setTheme } = useTheme()
   const { preferences, updateNotifications, updateSearchDefaults } = useUserPreferences()
+  const { user, signOut } = useAuth()
   const [mounted, setMounted] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
 
   useEffect(() => {
     setMounted(true)
@@ -44,6 +48,7 @@ export default function SettingsPage() {
   }
 
   return (
+    <>
     <main className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-background/95 backdrop-blur sticky top-0 z-50">
@@ -59,6 +64,50 @@ export default function SettingsPage() {
 
       <div className="container mx-auto px-4 py-6 max-w-2xl">
         <div className="space-y-6">
+          {/* Account */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="w-5 h-5" />
+                Account
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {user ? (
+                <>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Email</span>
+                    <span className="text-sm font-medium">{user.email}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Display Name</span>
+                    <span className="text-sm font-medium">
+                      {user.user_metadata?.display_name || user.email?.split('@')[0]}
+                    </span>
+                  </div>
+                  <Separator />
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => signOut()}
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign Out
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  className="w-full"
+                  onClick={() => setAuthOpen(true)}
+                >
+                  <User className="w-4 h-4 mr-2" />
+                  Sign In / Create Account
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Language Settings */}
           <Card>
             <CardHeader>
@@ -210,5 +259,8 @@ export default function SettingsPage() {
         </div>
       </div>
     </main>
+
+    <AuthModal open={authOpen} onOpenChange={setAuthOpen} />
+    </>
   )
 }

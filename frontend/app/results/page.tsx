@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/Header'
 import { EventCard } from '@/components/EventCard'
 import { MapView } from '@/components/MapView'
-import { searchEvents } from '@/lib/api'
+import { searchEvents, getFavorites, addFavorite, removeFavorite } from '@/lib/api'
+import { useAuth } from '@/contexts/AuthContext'
 import { computeDateRange, mapPriceRangeToBackend, mapCategoryToBackend, getCategoryImage } from '@/lib/utils'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { EventResult, EventDisplayProps, SearchRequest } from '@/types'
@@ -126,6 +127,18 @@ function ResultsContent() {
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list')
   const [favorites, setFavorites] = useState<Set<string>>(new Set())
+  const [rawEvents, setRawEvents] = useState<EventResult[]>([])
+  const { user } = useAuth()
+
+  // Load favorites from DB on mount
+  useEffect(() => {
+    if (!user) return
+    getFavorites()
+      .then(({ items }) => {
+        setFavorites(new Set(items.map((f) => f.event_id)))
+      })
+      .catch((err) => console.error('Failed to load favorites:', err))
+  }, [user])
 
   // Parse search params
   const location = searchParams.get('location') || ''
@@ -172,16 +185,36 @@ function ResultsContent() {
     }
   }
 
-  const toggleFavorite = (eventId: string) => {
+  const toggleFavorite = async (eventId: string) => {
+    const isFav = favorites.has(eventId)
+
+    // Optimistic update
     setFavorites((prev) => {
-      const newFavorites = new Set(prev)
-      if (newFavorites.has(eventId)) {
-        newFavorites.delete(eventId)
-      } else {
-        newFavorites.add(eventId)
-      }
-      return newFavorites
+      const next = new Set(prev)
+      if (isFav) next.delete(eventId)
+      else next.add(eventId)
+      return next
     })
+
+    if (user) {
+      try {
+        if (isFav) {
+          await removeFavorite(eventId)
+        } else {
+          const eventData = rawEvents.find((e) => e.event_id === eventId)
+          await addFavorite(eventId, eventData ? (eventData as unknown as Record<string, unknown>) : {})
+        }
+      } catch (err) {
+        console.error('Failed to update favorite:', err)
+        // Revert on failure
+        setFavorites((prev) => {
+          const next = new Set(prev)
+          if (isFav) next.add(eventId)
+          else next.delete(eventId)
+          return next
+        })
+      }
+    }
   }
 
   const fetchEvents = async () => {
@@ -208,6 +241,7 @@ function ResultsContent() {
       }
 
       const response = await searchEvents(searchRequest)
+      setRawEvents(response.events)
       const mappedEvents = response.events.map(mapEventToDisplay)
       setEvents(mappedEvents)
     } catch (err) {

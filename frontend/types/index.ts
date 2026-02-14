@@ -227,3 +227,39 @@ export interface TranslationStrings {
 
 // Supported languages
 export type Language = 'en' | 'de' | 'fr' | 'es';
+
+// User Profile
+export interface UserProfile {
+  id: string;
+  email: string;
+  display_name?: string;
+  avatar_url?: string;
+  preferred_language: string;
+  default_location: string;
+  default_radius_km: number;
+  default_search_mode: string;
+  notify_event_reminders: boolean;
+  notify_new_events: boolean;
+  created_at?: string;
+}
+
+// Search History Item
+export interface SearchHistoryItem {
+  id: string;
+  query: string;
+  location?: string;
+  category?: string;
+  radius_km?: number;
+  results_count: number;
+  filters: Record<string, unknown>;
+  created_at: string;
+}
+
+// Favorite Item
+export interface FavoriteItem {
+  id: string;
+  event_id: string;
+  event_data: Record<string, unknown>;
+  notes: string;
+  created_at: string;
+}
