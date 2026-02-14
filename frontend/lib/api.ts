@@ -1,5 +1,5 @@
 import { SearchRequest, SearchResponse, Category, FilterOptions, UserProfile, SearchHistoryItem, FavoriteItem } from '@/types';
-import { supabase } from '@/lib/supabase';
+import { getSupabaseClient } from '@/lib/supabase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -9,12 +9,15 @@ if (typeof window !== 'undefined') {
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session?.access_token) {
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-    };
+  const client = getSupabaseClient();
+  if (client) {
+    const { data: { session } } = await client.auth.getSession();
+    if (session?.access_token) {
+      return {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      };
+    }
   }
   return { 'Content-Type': 'application/json' };
 }
