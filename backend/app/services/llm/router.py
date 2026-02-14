@@ -1,6 +1,6 @@
 """
 LLM Router with fallback chain.
-Implements the fallback strategy: Gemini → OpenAI → Claude → Error
+Implements the fallback strategy: Claude → OpenAI → Gemini → Error
 """
 from typing import Any
 
@@ -21,10 +21,9 @@ class LLMRouter:
     Routes LLM requests with automatic fallback.
 
     Architecture:
-    - Claude: Prompt engineering (primary)
-    - Gemini: Processing (primary, cheaper)
+    - Claude: Prompt engineering + Processing (primary)
     - OpenAI: Processing fallback
-    - Claude: Final fallback for processing
+    - Gemini: Final fallback for processing
     """
 
     def __init__(self):
@@ -34,9 +33,9 @@ class LLMRouter:
 
         # Fallback chain for processing
         self._processor_chain: list[BaseLLM] = [
-            self.gemini,
-            self.openai,
             self.claude,
+            self.openai,
+            self.gemini,
         ]
 
         # Track failures for circuit breaker
@@ -106,7 +105,7 @@ class LLMRouter:
     ) -> tuple[BaseModel | None, LLMResponse]:
         """
         Process raw results using the fallback chain.
-        Tries: Gemini → OpenAI → Claude
+        Tries: Claude → OpenAI → Gemini
         """
         if not raw_results:
             return None, LLMResponse(

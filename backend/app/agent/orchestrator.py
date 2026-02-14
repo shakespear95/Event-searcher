@@ -26,7 +26,7 @@ from app.schemas.extraction import (
     EXTRACTION_USER_PROMPT,
 )
 from app.services.llm.router import LLMRouter
-from app.services.llm.gemini import GeminiLLM
+from app.services.llm.claude import ClaudeLLM
 from app.services.search.perplexity import PerplexitySearch
 from app.services.search.serpapi import SerpAPISearch
 from app.services.search.merger import SearchMerger, MergedSearchResults
@@ -67,7 +67,7 @@ class AgentOrchestrator:
     └──────┬──────┘
            ↓
     ┌─────────────┐
-    │   Gemini    │ ← Process to structured output
+    │   Claude    │ ← Process to structured output
     └──────┬──────┘
            ↓
     ┌─────────────┐
@@ -81,7 +81,7 @@ class AgentOrchestrator:
 
     def __init__(self):
         self.llm_router = LLMRouter()
-        self.gemini = GeminiLLM()
+        self.claude = ClaudeLLM()
         self.perplexity = PerplexitySearch()
         self.serpapi = SerpAPISearch()
         self.merger = SearchMerger()
@@ -357,31 +357,31 @@ class AgentOrchestrator:
         request: SearchRequest,
         state: GlobalState,
     ) -> list[EventResult]:
-        """Process raw results into structured EventResult objects using Gemini."""
-        logger.info("========== GEMINI PROCESSING START ==========")
+        """Process raw results into structured EventResult objects using Claude."""
+        logger.info("========== CLAUDE PROCESSING START ==========")
 
         if not merged_results.results:
-            logger.warning("[GEMINI] No merged results to process")
+            logger.warning("[CLAUDE] No merged results to process")
             return []
 
-        logger.info(f"[GEMINI] Processing {len(merged_results.results)} raw results")
+        logger.info(f"[CLAUDE] Processing {len(merged_results.results)} raw results")
 
         # Get data for extraction
         perplexity_content = self.merger.get_perplexity_content(merged_results)
         source_urls = self.merger.get_source_urls(merged_results)
         serpapi_snippets = self.merger.get_serpapi_snippets(merged_results)
 
-        logger.info(f"[GEMINI] Perplexity content length: {len(perplexity_content) if perplexity_content else 0} chars")
-        logger.info(f"[GEMINI] Source URLs count: {len(source_urls)}")
-        logger.info(f"[GEMINI] SerpAPI snippets length: {len(serpapi_snippets) if serpapi_snippets else 0} chars")
+        logger.info(f"[CLAUDE] Perplexity content length: {len(perplexity_content) if perplexity_content else 0} chars")
+        logger.info(f"[CLAUDE] Source URLs count: {len(source_urls)}")
+        logger.info(f"[CLAUDE] SerpAPI snippets length: {len(serpapi_snippets) if serpapi_snippets else 0} chars")
 
         if perplexity_content:
-            logger.info(f"[GEMINI] Perplexity content preview: {perplexity_content[:300]}...")
+            logger.info(f"[CLAUDE] Perplexity content preview: {perplexity_content[:300]}...")
         if serpapi_snippets:
-            logger.info(f"[GEMINI] SerpAPI snippets preview: {serpapi_snippets[:300]}...")
+            logger.info(f"[CLAUDE] SerpAPI snippets preview: {serpapi_snippets[:300]}...")
 
         if not perplexity_content and not serpapi_snippets:
-            logger.warning("[GEMINI] No content available for extraction")
+            logger.warning("[CLAUDE] No content available for extraction")
             return []
 
         # Build extraction prompt
@@ -392,39 +392,39 @@ class AgentOrchestrator:
             serpapi_snippets=serpapi_snippets or "No snippets",
         )
 
-        # Use Gemini to extract structured events
+        # Use Claude to extract structured events
         try:
-            extracted, response = await self.gemini.generate_structured(
+            extracted, response = await self.claude.generate_structured(
                 prompt=extraction_prompt,
                 output_schema=ExtractedEventsResponse,
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
             )
 
             state.log_llm_call(
-                provider="gemini",
-                model="gemini-1.5-flash",
+                provider="claude",
+                model=self.claude.default_model,
                 purpose="extract_events",
                 success=response.success,
             )
 
             if not extracted or not response.success:
-                logger.warning(f"[GEMINI] Extraction failed: {response.error}")
+                logger.warning(f"[CLAUDE] Extraction failed: {response.error}")
                 # Fallback to basic processing
                 return self._fallback_process_results(merged_results, request, state)
 
-            logger.info(f"[GEMINI] Extraction successful! Found {len(extracted.events)} events")
+            logger.info(f"[CLAUDE] Extraction successful! Found {len(extracted.events)} events")
 
             # Convert ExtractedEvent to EventResult - filter out events without dates
             events = []
             skipped_no_date = 0
             for i, extracted_event in enumerate(extracted.events):
-                logger.info(f"[GEMINI]   Event {i+1}: {extracted_event.name[:50] if extracted_event.name else 'No name'}...")
-                logger.info(f"[GEMINI]     Date: {extracted_event.date}, Venue: {extracted_event.venue}")
-                logger.info(f"[GEMINI]     Source: {extracted_event.source_url[:60] if extracted_event.source_url else 'No URL'}")
+                logger.info(f"[CLAUDE]   Event {i+1}: {extracted_event.name[:50] if extracted_event.name else 'No name'}...")
+                logger.info(f"[CLAUDE]     Date: {extracted_event.date}, Venue: {extracted_event.venue}")
+                logger.info(f"[CLAUDE]     Source: {extracted_event.source_url[:60] if extracted_event.source_url else 'No URL'}")
 
                 # Skip events without dates
                 if not extracted_event.date or extracted_event.date.lower() in ['none', 'null', 'unknown', 'tbd', 'n/a', '']:
-                    logger.info(f"[GEMINI]     SKIPPED - no valid date")
+                    logger.info(f"[CLAUDE]     SKIPPED - no valid date")
                     skipped_no_date += 1
                     continue
 
@@ -442,17 +442,17 @@ class AgentOrchestrator:
                         )
                 except Exception as e:
                     state.add_warning(f"Failed to convert extracted event {i}: {e}")
-                    logger.warning(f"[GEMINI] Failed to convert event: {e}")
+                    logger.warning(f"[CLAUDE] Failed to convert event: {e}")
 
             if skipped_no_date > 0:
-                logger.info(f"[GEMINI] Skipped {skipped_no_date} events without valid dates")
+                logger.info(f"[CLAUDE] Skipped {skipped_no_date} events without valid dates")
 
-            logger.info(f"========== GEMINI PROCESSING COMPLETE ==========")
-            logger.info(f"[GEMINI] Final event count: {len(events)}")
+            logger.info(f"========== CLAUDE PROCESSING COMPLETE ==========")
+            logger.info(f"[CLAUDE] Final event count: {len(events)}")
             return events[:request.results_count]
 
         except Exception as e:
-            logger.error(f"Gemini extraction error: {e}")
+            logger.error(f"Claude extraction error: {e}")
             state.add_error(f"Extraction failed: {e}")
             return self._fallback_process_results(merged_results, request, state)
 
