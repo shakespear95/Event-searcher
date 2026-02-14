@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
-import { Session, User } from '@supabase/supabase-js'
+import { Session, User, Provider } from '@supabase/supabase-js'
 import { getSupabaseClient } from '@/lib/supabase'
 
 interface AuthContextType {
@@ -10,6 +10,7 @@ interface AuthContextType {
   loading: boolean
   signUp: (email: string, password: string, displayName?: string) => Promise<{ error: string | null }>
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  signInWithOAuth: (provider: Provider) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
 
@@ -66,13 +67,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error?.message ?? null }
   }, [])
 
+  const signInWithOAuth = useCallback(async (provider: Provider) => {
+    const client = getSupabaseClient()
+    if (!client) return { error: 'Auth not configured' }
+    const { error } = await client.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    })
+    return { error: error?.message ?? null }
+  }, [])
+
   const signOut = useCallback(async () => {
     const client = getSupabaseClient()
     if (client) await client.auth.signOut()
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, signUp, signIn, signInWithOAuth, signOut }}>
       {children}
     </AuthContext.Provider>
   )
