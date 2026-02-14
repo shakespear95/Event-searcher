@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   MapPin,
   Navigation,
@@ -33,6 +33,7 @@ import {
 } from './ui/dialog'
 import { Checkbox } from './ui/checkbox'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useUserPreferences } from '@/contexts/UserPreferencesContext'
 import { SearchFilters } from '@/types'
 import { reverseGeocode } from '@/lib/api'
 
@@ -123,10 +124,22 @@ const defaultFilters: SearchFilters = {
 
 export function SearchScreen({ onStartSearch, onShowResults }: SearchScreenProps) {
   const { t } = useLanguage()
+  const { preferences } = useUserPreferences()
   const [filters, setFilters] = useState<SearchFilters>(defaultFilters)
   const [showCategoriesModal, setShowCategoriesModal] = useState(false)
   const [showBudgetOptions, setShowBudgetOptions] = useState(false)
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+
+  // Pre-populate filters from saved user preferences
+  useEffect(() => {
+    const { defaultLocation, defaultRadius, defaultSearchMode } = preferences.searchDefaults
+    setFilters(prev => ({
+      ...prev,
+      ...(defaultLocation && !prev.location ? { location: defaultLocation } : {}),
+      ...(defaultRadius !== 25 ? { radius: defaultRadius } : {}),
+      ...(defaultSearchMode !== 'standard' ? { searchMode: defaultSearchMode } : {}),
+    }))
+  }, [preferences.searchDefaults])
 
   const handleLocationDetection = async () => {
     if (!navigator.geolocation) {

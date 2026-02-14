@@ -1,6 +1,6 @@
 "use client"
 
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react'
 import { Language, TranslationStrings } from '@/types'
 
 // Translation data for all supported languages
@@ -59,6 +59,17 @@ const translations: Record<Language, TranslationStrings> = {
       language: 'Language',
       darkMode: 'Dark Mode',
       notifications: 'Notifications',
+      appSettings: 'App Settings',
+      eventReminders: 'Event Reminders',
+      eventRemindersDesc: 'Get notified before saved events start',
+      newEventsInArea: 'New Events in Your Area',
+      newEventsInAreaDesc: 'Get notified when new events match your interests',
+      searchDefaults: 'Search Defaults',
+      defaultLocation: 'Default Location',
+      defaultLocationPlaceholder: 'Enter your default city...',
+      defaultRadius: 'Default Radius',
+      defaultSearchMode: 'Default Search Mode',
+      about: 'About',
     },
   },
   de: {
@@ -115,6 +126,17 @@ const translations: Record<Language, TranslationStrings> = {
       language: 'Sprache',
       darkMode: 'Dunkelmodus',
       notifications: 'Benachrichtigungen',
+      appSettings: 'App-Einstellungen',
+      eventReminders: 'Event-Erinnerungen',
+      eventRemindersDesc: 'Benachrichtigung vor gespeicherten Events',
+      newEventsInArea: 'Neue Events in deiner Nähe',
+      newEventsInAreaDesc: 'Benachrichtigung bei neuen passenden Events',
+      searchDefaults: 'Sucheinstellungen',
+      defaultLocation: 'Standardstandort',
+      defaultLocationPlaceholder: 'Standardstadt eingeben...',
+      defaultRadius: 'Standardradius',
+      defaultSearchMode: 'Standard-Suchmodus',
+      about: 'Über',
     },
   },
   fr: {
@@ -171,6 +193,17 @@ const translations: Record<Language, TranslationStrings> = {
       language: 'Langue',
       darkMode: 'Mode sombre',
       notifications: 'Notifications',
+      appSettings: 'Paramètres de l\'application',
+      eventReminders: 'Rappels d\'événements',
+      eventRemindersDesc: 'Être notifié avant les événements sauvegardés',
+      newEventsInArea: 'Nouveaux événements près de chez vous',
+      newEventsInAreaDesc: 'Être notifié des nouveaux événements correspondants',
+      searchDefaults: 'Recherche par défaut',
+      defaultLocation: 'Lieu par défaut',
+      defaultLocationPlaceholder: 'Entrez votre ville par défaut...',
+      defaultRadius: 'Rayon par défaut',
+      defaultSearchMode: 'Mode de recherche par défaut',
+      about: 'À propos',
     },
   },
   es: {
@@ -227,6 +260,17 @@ const translations: Record<Language, TranslationStrings> = {
       language: 'Idioma',
       darkMode: 'Modo oscuro',
       notifications: 'Notificaciones',
+      appSettings: 'Ajustes de la aplicación',
+      eventReminders: 'Recordatorios de eventos',
+      eventRemindersDesc: 'Recibe notificaciones antes de tus eventos guardados',
+      newEventsInArea: 'Nuevos eventos en tu zona',
+      newEventsInAreaDesc: 'Recibe notificaciones de nuevos eventos relevantes',
+      searchDefaults: 'Búsqueda predeterminada',
+      defaultLocation: 'Ubicación predeterminada',
+      defaultLocationPlaceholder: 'Ingrese su ciudad predeterminada...',
+      defaultRadius: 'Radio predeterminado',
+      defaultSearchMode: 'Modo de búsqueda predeterminado',
+      about: 'Acerca de',
     },
   },
 }
@@ -247,6 +291,16 @@ interface LanguageProviderProps {
 
 export function LanguageProvider({ children, defaultLanguage = 'en' }: LanguageProviderProps) {
   const [language, setLanguageState] = useState<Language>(defaultLanguage)
+
+  // Restore saved language from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('preferred-language') as Language | null
+      if (saved && ['en', 'de', 'fr', 'es'].includes(saved)) {
+        setLanguageState(saved)
+      }
+    }
+  }, [])
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang)

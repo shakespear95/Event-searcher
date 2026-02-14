@@ -211,6 +211,17 @@ export interface TranslationStrings {
     language: string;
     darkMode: string;
     notifications: string;
+    appSettings: string;
+    eventReminders: string;
+    eventRemindersDesc: string;
+    newEventsInArea: string;
+    newEventsInAreaDesc: string;
+    searchDefaults: string;
+    defaultLocation: string;
+    defaultLocationPlaceholder: string;
+    defaultRadius: string;
+    defaultSearchMode: string;
+    about: string;
   };
 }
 

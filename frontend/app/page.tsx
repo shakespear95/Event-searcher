@@ -1,15 +1,21 @@
 "use client"
 
-import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Header } from '@/components/Header'
 import { SearchScreen } from '@/components/SearchScreen'
+import { useUserPreferences } from '@/contexts/UserPreferencesContext'
 import { SearchFilters } from '@/types'
 
 export default function HomePage() {
   const router = useRouter()
+  const { updateSearchDefaults } = useUserPreferences()
 
   const handleStartSearch = (filters: SearchFilters) => {
+    // Auto-save the searched location as default
+    if (filters.location.trim()) {
+      updateSearchDefaults({ defaultLocation: filters.location })
+    }
+
     // Convert filters to URL search params
     const params = new URLSearchParams()
 

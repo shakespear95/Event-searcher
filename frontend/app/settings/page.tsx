@@ -1,9 +1,13 @@
 "use client"
 
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Globe, Moon, Bell } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { ArrowLeft, Globe, Moon, Bell, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Slider } from '@/components/ui/slider'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -13,7 +17,9 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useUserPreferences } from '@/contexts/UserPreferencesContext'
 import { Language } from '@/types'
+import { useEffect, useState } from 'react'
 
 const languageOptions: { value: Language; label: string }[] = [
   { value: 'en', label: 'English' },
@@ -25,6 +31,13 @@ const languageOptions: { value: Language; label: string }[] = [
 export default function SettingsPage() {
   const router = useRouter()
   const { language, setLanguage, t } = useLanguage()
+  const { theme, setTheme } = useTheme()
+  const { preferences, updateNotifications, updateSearchDefaults } = useUserPreferences()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const handleBack = () => {
     router.back()
@@ -73,25 +86,107 @@ export default function SettingsPage() {
           {/* App Settings */}
           <Card>
             <CardHeader>
-              <CardTitle>App Settings</CardTitle>
+              <CardTitle>{t('settings.appSettings')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Dark Mode Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <Moon className="w-5 h-5 text-muted-foreground" />
                   <span>{t('settings.darkMode')}</span>
                 </div>
-                <span className="text-sm text-muted-foreground">Coming soon</span>
+                {mounted && (
+                  <Switch
+                    checked={theme === 'dark'}
+                    onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
+                  />
+                )}
               </div>
 
               <Separator />
 
-              <div className="flex items-center justify-between">
+              {/* Notification Settings */}
+              <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <Bell className="w-5 h-5 text-muted-foreground" />
-                  <span>{t('settings.notifications')}</span>
+                  <span className="font-medium">{t('settings.notifications')}</span>
                 </div>
-                <span className="text-sm text-muted-foreground">Coming soon</span>
+
+                <div className="ml-8 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm">{t('settings.eventReminders')}</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.eventRemindersDesc')}</p>
+                    </div>
+                    <Switch
+                      checked={preferences.notifications.eventReminders}
+                      onCheckedChange={(checked) => updateNotifications({ eventReminders: checked })}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm">{t('settings.newEventsInArea')}</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.newEventsInAreaDesc')}</p>
+                    </div>
+                    <Switch
+                      checked={preferences.notifications.newEventsInArea}
+                      onCheckedChange={(checked) => updateNotifications({ newEventsInArea: checked })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Search Defaults */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Search className="w-5 h-5" />
+                {t('settings.searchDefaults')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Default Location */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t('settings.defaultLocation')}</label>
+                <Input
+                  placeholder={t('settings.defaultLocationPlaceholder')}
+                  value={preferences.searchDefaults.defaultLocation}
+                  onChange={(e) => updateSearchDefaults({ defaultLocation: e.target.value })}
+                />
+              </div>
+
+              {/* Default Radius */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  {t('settings.defaultRadius')}: {preferences.searchDefaults.defaultRadius} km
+                </label>
+                <Slider
+                  value={[preferences.searchDefaults.defaultRadius]}
+                  onValueChange={(value) => updateSearchDefaults({ defaultRadius: value[0] })}
+                  max={100}
+                  min={1}
+                  step={1}
+                />
+              </div>
+
+              {/* Default Search Mode */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{t('settings.defaultSearchMode')}</label>
+                <Select
+                  value={preferences.searchDefaults.defaultSearchMode}
+                  onValueChange={(value) => updateSearchDefaults({ defaultSearchMode: value as 'standard' | 'discover' })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard">{t('search.standard')}</SelectItem>
+                    <SelectItem value="discover">{t('search.discover')}</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
@@ -99,7 +194,7 @@ export default function SettingsPage() {
           {/* About */}
           <Card>
             <CardHeader>
-              <CardTitle>About</CardTitle>
+              <CardTitle>{t('settings.about')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               <div className="flex justify-between">
