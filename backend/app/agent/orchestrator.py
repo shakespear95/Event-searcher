@@ -456,6 +456,55 @@ class AgentOrchestrator:
             state.add_error(f"Extraction failed: {e}")
             return self._fallback_process_results(merged_results, request, state)
 
+    def _parse_events_from_perplexity(self, content: str) -> list[dict[str, str]]:
+        """Extract structured event data from Perplexity markdown content."""
+        import re
+        events = []
+        current: dict[str, str] = {}
+
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Match "**Event name/title**: ..." or "- **Event name/title**: ..."
+            name_match = re.match(r'^-?\s*\*\*(?:Event\s+)?name(?:/title)?\*\*:\s*(.+)', line, re.IGNORECASE)
+            if name_match:
+                if current.get("name"):
+                    events.append(current)
+                current = {"name": name_match.group(1).strip()}
+                continue
+
+            date_match = re.match(r'^-?\s*\*\*(?:Specific\s+)?date\*\*:\s*(.+)', line, re.IGNORECASE)
+            if date_match and current:
+                current["date"] = date_match.group(1).strip()
+                continue
+
+            time_match = re.match(r'^-?\s*\*\*Time\*\*:\s*(.+)', line, re.IGNORECASE)
+            if time_match and current:
+                current["time"] = time_match.group(1).strip()
+                continue
+
+            venue_match = re.match(r'^-?\s*\*\*Venue(?:\s+name)?(?:\s+and\s+location)?\*\*:\s*(.+)', line, re.IGNORECASE)
+            if venue_match and current:
+                current["venue"] = venue_match.group(1).strip()
+                continue
+
+            desc_match = re.match(r'^-?\s*\*\*(?:Brief\s+)?description\*\*:\s*(.+)', line, re.IGNORECASE)
+            if desc_match and current:
+                current["description"] = desc_match.group(1).strip()
+                continue
+
+            source_match = re.match(r'^-?\s*\*\*Source(?:\s+URL)?(?:\s+or\s+ticket\s+link)?\*\*:\s*(.+)', line, re.IGNORECASE)
+            if source_match and current:
+                current["source_url"] = source_match.group(1).strip()
+                continue
+
+        if current.get("name"):
+            events.append(current)
+
+        return events
+
     def _fallback_process_results(
         self,
         merged_results: MergedSearchResults,
@@ -463,6 +512,24 @@ class AgentOrchestrator:
         state: GlobalState,
     ) -> list[EventResult]:
         """Fallback processing when Gemini extraction fails."""
+        # First, try to parse structured events from Perplexity content
+        perplexity_content = self.merger.get_perplexity_content(merged_results)
+        parsed_events = self._parse_events_from_perplexity(perplexity_content) if perplexity_content else []
+
+        if parsed_events:
+            logger.info(f"[FALLBACK] Parsed {len(parsed_events)} events from Perplexity content")
+            events = []
+            for i, parsed in enumerate(parsed_events):
+                try:
+                    event = self._create_event_from_parsed(parsed, request, i)
+                    if event:
+                        events.append(event)
+                except Exception as e:
+                    logger.warning(f"Fallback parsed event {i} failed: {e}")
+            if events:
+                return events[:request.results_count]
+
+        # Fall back to raw results
         raw_list = self.merger.to_raw_list(merged_results)
         events = []
 
@@ -568,6 +635,84 @@ class AgentOrchestrator:
             ),
             image_url=extracted.image_url,
             relevance_score=0.8,
+            is_hidden_gem=request.hidden_gems,
+        )
+
+    def _create_event_from_parsed(
+        self, parsed: dict[str, str], request: SearchRequest, index: int
+    ) -> EventResult | None:
+        """Create EventResult from Perplexity-parsed event data."""
+        from app.schemas.event import (
+            EventLocation,
+            EventTiming,
+            EventPricing,
+            EventCategory,
+        )
+
+        name = parsed.get("name", "").strip()
+        if not name:
+            return None
+
+        # Parse date
+        event_date = None
+        date_str = parsed.get("date", "")
+        if date_str:
+            import re
+            from dateutil import parser as dateparser
+            try:
+                # Remove qualifiers like "Not specified"
+                if date_str.lower() not in ['not specified', 'n/a', 'tbd', 'unknown', 'none']:
+                    event_date = dateparser.parse(date_str, fuzzy=True)
+            except (ValueError, TypeError):
+                pass
+
+        if not event_date:
+            event_date = datetime.combine(request.date_from, datetime.min.time()) if request.date_from else datetime.now()
+
+        # Parse venue
+        venue = parsed.get("venue", "")
+        city = request.location.split(",")[0].strip()
+
+        # Determine category
+        try:
+            category = (
+                EventCategory(request.category)
+                if request.category != "all"
+                else EventCategory.COMMUNITY
+            )
+        except ValueError:
+            category = EventCategory.COMMUNITY
+
+        source_url = parsed.get("source_url", "")
+        # Clean markdown links from source_url
+        if source_url.startswith("["):
+            import re
+            link_match = re.search(r'\((https?://[^\)]+)\)', source_url)
+            if link_match:
+                source_url = link_match.group(1)
+
+        return EventResult(
+            event_id=f"evt_{uuid.uuid4().hex[:8]}",
+            event_name=name,
+            description=parsed.get("description", ""),
+            category=category,
+            location=EventLocation(
+                city=city,
+                country=request.location.split(",")[-1].strip() if "," in request.location else "Unknown",
+                venue_name=venue if venue else None,
+            ),
+            timing=EventTiming(
+                start_datetime=event_date,
+            ),
+            pricing=EventPricing(
+                is_free=request.price_range == "free",
+            ),
+            source=EventSource(
+                source_url=source_url or f"https://www.google.com/search?q={name.replace(' ', '+')}",
+                source_api=DataSource.PERPLEXITY,
+                verified=True,
+            ),
+            relevance_score=0.7,
             is_hidden_gem=request.hidden_gems,
         )
 
