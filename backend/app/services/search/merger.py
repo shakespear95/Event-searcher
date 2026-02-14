@@ -2,6 +2,7 @@
 Search Result Merger.
 Combines and deduplicates results from Perplexity and SerpAPI.
 """
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -93,6 +94,82 @@ class SearchMerger:
         if title and title.strip():
             self.seen_titles.add(self._normalize_title(title))
 
+    def _parse_events_from_content(self, content: str) -> list[dict[str, str]]:
+        """Parse structured events from Perplexity markdown content.
+
+        Extracts event name, date, venue, description, and any mentioned URLs
+        from the typical Perplexity response format using bold markdown headers.
+        """
+        events: list[dict[str, str]] = []
+        current: dict[str, str] = {}
+
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Match bold event headers like "**Event Name**" at the start of a line
+            # or "- **Event Name**" or "1. **Event Name**"
+            header_match = re.match(r'^(?:[-*\d.]+\s*)?\*\*([^*]+)\*\*', line)
+            if header_match:
+                text_after = line[header_match.end():].strip()
+                # Check if it's a field label like "**Date**: ..." or "**Event name/title**: ..."
+                is_field = text_after.startswith(':') or text_after.startswith('-')
+                field_label = header_match.group(1).strip().lower()
+                field_labels = ['date', 'time', 'venue', 'location', 'description',
+                                'source', 'price', 'event name', 'event name/title',
+                                'specific date', 'brief description', 'venue name',
+                                'source url', 'venue name and location']
+
+                if is_field and any(field_label.startswith(fl) for fl in field_labels):
+                    # This is a field within an event
+                    value = text_after.lstrip(':- ').strip()
+                    if 'name' in field_label and 'title' in field_label:
+                        if current.get("name"):
+                            events.append(current)
+                        current = {"name": value}
+                    elif 'date' in field_label and current:
+                        current["date"] = value
+                    elif 'time' in field_label and current:
+                        current["time"] = value
+                    elif 'venue' in field_label or ('location' in field_label and field_label != 'location'):
+                        if current:
+                            current["venue"] = value
+                    elif 'description' in field_label and current:
+                        current["description"] = value
+                    elif 'source' in field_label and current:
+                        current["source_url"] = value
+                else:
+                    # This is an event title header
+                    if current.get("name"):
+                        events.append(current)
+                    current = {"name": header_match.group(1).strip()}
+                    # Check if there's extra info after the bold
+                    if text_after.startswith(':') or text_after.startswith('–') or text_after.startswith('-'):
+                        current["description"] = text_after.lstrip(':–- ').strip()
+                continue
+
+            # Match "- Date: ..." or "  Date: ..." style fields
+            field_match = re.match(r'^[-•]\s*\*?\*?(\w[\w\s/]*?)\*?\*?\s*[:]\s*(.+)', line)
+            if field_match and current:
+                key = field_match.group(1).strip().lower()
+                value = field_match.group(2).strip()
+                if 'date' in key:
+                    current["date"] = value
+                elif 'time' in key:
+                    current["time"] = value
+                elif 'venue' in key or 'location' in key:
+                    current["venue"] = value
+                elif 'description' in key:
+                    current["description"] = value
+                elif 'source' in key or 'url' in key or 'ticket' in key:
+                    current["source_url"] = value
+
+        if current.get("name"):
+            events.append(current)
+
+        return events
+
     def merge(
         self,
         perplexity_result: PerplexityResult | None,
@@ -122,20 +199,43 @@ class SearchMerger:
             merged.serpapi_success = True
             merged.sources_used.append("serpapi")
 
+        # Parse events from Perplexity content to enrich results
+        parsed_events: list[dict[str, str]] = []
+        if perplexity_result and perplexity_result.success and perplexity_result.content:
+            parsed_events = self._parse_events_from_content(perplexity_result.content)
+            logger.info(f"[MERGER] Parsed {len(parsed_events)} events from Perplexity content")
+            for i, pe in enumerate(parsed_events):
+                logger.info(f"[MERGER]   Parsed event {i+1}: {pe.get('name', 'unnamed')[:60]}")
+
         # Process Perplexity sources first
         if perplexity_result and perplexity_result.success:
-            for source_url in perplexity_result.sources:
+            for idx, source_url in enumerate(perplexity_result.sources):
                 if not self._is_duplicate(source_url, ""):
+                    # Try to match a parsed event to this source URL
+                    title = ""
+                    snippet = ""
+                    if idx < len(parsed_events):
+                        pe = parsed_events[idx]
+                        title = pe.get("name", "")
+                        parts = []
+                        if pe.get("date"):
+                            parts.append(pe["date"])
+                        if pe.get("venue"):
+                            parts.append(pe["venue"])
+                        if pe.get("description"):
+                            parts.append(pe["description"])
+                        snippet = " | ".join(parts)
+
                     result = MergedResult(
-                        title="",  # Will be enriched from SerpAPI or scraping
+                        title=title,
                         url=source_url,
-                        snippet="",
+                        snippet=snippet,
                         sources=["perplexity"],
                         perplexity_content=perplexity_result.content,
                         confidence_score=0.7,
                     )
                     results.append(result)
-                    self._mark_seen(source_url, "")
+                    self._mark_seen(source_url, title)
 
             merged.total_raw_results += len(perplexity_result.sources)
 
