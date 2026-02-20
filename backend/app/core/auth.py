@@ -34,17 +34,25 @@ async def optional_user(request: Request) -> Optional[AuthenticatedUser]:
     """
     token = _extract_token(request)
     if not token:
+        logger.debug("No Bearer token in request")
         return None
 
+    logger.info("Token received", token_prefix=token[:20] + "...")
     try:
         client = get_supabase_client()
+        logger.debug("Supabase client obtained, verifying token...")
         user_response = client.auth.get_user(token)
         user = user_response.user
         if not user:
+            logger.warning("Token valid but no user returned")
             return None
+        logger.info("User authenticated", user_id=user.id, email=user.email)
         return AuthenticatedUser(id=user.id, email=user.email)
+    except RuntimeError as e:
+        logger.error("Supabase client not configured", error=str(e))
+        return None
     except Exception as e:
-        logger.debug("Token verification failed", error=str(e))
+        logger.warning("Token verification failed", error=str(e), error_type=type(e).__name__)
         return None
 
 

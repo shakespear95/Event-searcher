@@ -13,11 +13,15 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   if (client) {
     const { data: { session } } = await client.auth.getSession();
     if (session?.access_token) {
+      console.log('[API] Auth header: Bearer token present, user:', session.user?.email);
       return {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${session.access_token}`,
       };
     }
+    console.log('[API] No active session - sending unauthenticated request');
+  } else {
+    console.log('[API] No Supabase client - sending unauthenticated request');
   }
   return { 'Content-Type': 'application/json' };
 }

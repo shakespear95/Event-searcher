@@ -23,21 +23,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const client = getSupabaseClient()
+    console.log('[Auth] Initializing, client available:', !!client)
     if (!client) {
+      console.warn('[Auth] No Supabase client - auth disabled')
       setLoading(false)
       return
     }
 
     // Get initial session
     client.auth.getSession().then(({ data: { session } }) => {
+      console.log('[Auth] Initial session:', session ? `user=${session.user?.email}` : 'none')
       setSession(session)
       setUser(session?.user ?? null)
+      setLoading(false)
+    }).catch((err) => {
+      console.error('[Auth] getSession error:', err)
       setLoading(false)
     })
 
     // Listen for auth changes
     const { data: { subscription } } = client.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
+        console.log('[Auth] State change:', event, session ? `user=${session.user?.email}` : 'no session')
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
@@ -49,33 +56,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signUp = useCallback(async (email: string, password: string, displayName?: string) => {
     const client = getSupabaseClient()
-    if (!client) return { error: 'Auth not configured' }
-    const { error } = await client.auth.signUp({
+    console.log('[Auth] signUp called for:', email)
+    if (!client) {
+      console.error('[Auth] signUp failed - no Supabase client')
+      return { error: 'Auth not configured' }
+    }
+    const { data, error } = await client.auth.signUp({
       email,
       password,
       options: {
         data: { display_name: displayName || email.split('@')[0] },
       },
     })
+    console.log('[Auth] signUp result:', { user: data?.user?.id, session: !!data?.session, error: error?.message })
+    if (data?.user && !data?.session) {
+      console.log('[Auth] signUp success - email confirmation required')
+    }
     return { error: error?.message ?? null }
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
     const client = getSupabaseClient()
-    if (!client) return { error: 'Auth not configured' }
-    const { error } = await client.auth.signInWithPassword({ email, password })
+    console.log('[Auth] signIn called for:', email)
+    if (!client) {
+      console.error('[Auth] signIn failed - no Supabase client')
+      return { error: 'Auth not configured' }
+    }
+    const { data, error } = await client.auth.signInWithPassword({ email, password })
+    console.log('[Auth] signIn result:', { user: data?.user?.id, session: !!data?.session, error: error?.message })
     return { error: error?.message ?? null }
   }, [])
 
   const signInWithOAuth = useCallback(async (provider: Provider) => {
     const client = getSupabaseClient()
-    if (!client) return { error: 'Auth not configured' }
-    const { error } = await client.auth.signInWithOAuth({
+    console.log('[Auth] OAuth called for provider:', provider)
+    if (!client) {
+      console.error('[Auth] OAuth failed - no Supabase client')
+      return { error: 'Auth not configured' }
+    }
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined
+    console.log('[Auth] OAuth redirectTo:', redirectTo)
+    const { data, error } = await client.auth.signInWithOAuth({
       provider,
-      options: {
-        redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-      },
+      options: { redirectTo },
     })
+    console.log('[Auth] OAuth result:', { url: data?.url, error: error?.message })
     return { error: error?.message ?? null }
   }, [])
 
