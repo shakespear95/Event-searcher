@@ -1,7 +1,7 @@
 import { SearchRequest, SearchResponse, Category, FilterOptions, UserProfile, SearchHistoryItem, FavoriteItem } from '@/types';
 import { getSupabaseClient } from '@/lib/supabase';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://event-searcher-95.onrender.com';
 
 // Debug: Log the API URL being used (remove after debugging)
 if (typeof window !== 'undefined') {
