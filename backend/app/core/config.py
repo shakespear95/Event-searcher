@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
-    allowed_origins: str = "http://localhost:3000,https://event-searcher.vercel.app,https://event-searcher-95-git-main-shakespears-projects.vercel.app,https://event-searcher-95-f4katcg7i-shakespears-projects.vercel.app"
+    allowed_origins: str = "http://localhost:3000,https://event-searcher.vercel.app,https://event-searcher-95.vercel.app,https://event-searcher-95-git-main-shakespears-projects.vercel.app,https://event-searcher-95-f4katcg7i-shakespears-projects.vercel.app"
 
     # Rate Limiting
     rate_limit_per_minute: int = 60
