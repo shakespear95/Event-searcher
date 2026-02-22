@@ -25,10 +25,15 @@ from app.schemas.extraction import (
     EXTRACTION_SYSTEM_PROMPT,
     EXTRACTION_USER_PROMPT,
 )
+from app.core.config import settings
 from app.services.llm.router import LLMRouter
 from app.services.llm.claude import ClaudeLLM
 from app.services.search.perplexity import PerplexitySearch
 from app.services.search.serpapi import SerpAPISearch
+from app.services.search.serper import SerperSearch
+from app.services.search.firecrawl import FirecrawlSearch
+from app.services.search.exa import ExaSearch
+from app.services.search.ticketmaster import TicketmasterSearch
 from app.services.search.merger import SearchMerger, MergedSearchResults
 
 # Optional scraper import (requires playwright which may not be installed)
@@ -84,6 +89,10 @@ class AgentOrchestrator:
         self.claude = ClaudeLLM()
         self.perplexity = PerplexitySearch()
         self.serpapi = SerpAPISearch()
+        self.serper = SerperSearch() if settings.serper_api_key else None
+        self.firecrawl = FirecrawlSearch() if settings.firecrawl_api_key else None
+        self.exa = ExaSearch() if settings.exa_api_key else None
+        self.ticketmaster = TicketmasterSearch() if settings.ticketmaster_api_key else None
         self.merger = SearchMerger()
         self.scraper: ScraperEngine | None = None
 
@@ -217,8 +226,8 @@ class AgentOrchestrator:
     async def _execute_parallel_search(
         self, prompt: str, request: SearchRequest, state: GlobalState
     ):
-        """Execute Perplexity and SerpAPI searches in parallel."""
-        logger.debug("Executing parallel search")
+        """Execute all search providers in parallel."""
+        logger.debug("Executing parallel search across all providers")
 
         # Get category value (handle enum or string)
         category_value = request.category.value if hasattr(request.category, 'value') else str(request.category)
@@ -230,72 +239,114 @@ class AgentOrchestrator:
             location=request.location,
         )
 
-        # Run searches in parallel
-        perplexity_task = self.perplexity.search_events(
+        date_from_str = str(request.date_from)
+        date_to_str = str(request.date_to) if request.date_to else ""
+
+        # Build tasks dict -- only include providers that are available
+        tasks: dict[str, Any] = {}
+
+        tasks["perplexity"] = self.perplexity.search_events(
             query=prompt,
             category=category_value,
             location=request.location,
-            date_from=str(request.date_from),
-            date_to=str(request.date_to) if request.date_to else "",
+            date_from=date_from_str,
+            date_to=date_to_str,
             hidden_gems=request.hidden_gems,
         )
 
-        serpapi_task = self.serpapi.search_events(
+        tasks["serpapi"] = self.serpapi.search_events(
             query=prompt,
             location=request.location,
-            date_from=str(request.date_from),
+            date_from=date_from_str,
             category=category_value,
         )
 
-        perplexity_result, serpapi_result = await asyncio.gather(
-            perplexity_task,
-            serpapi_task,
-            return_exceptions=True,
-        )
+        if self.serper:
+            tasks["serper"] = self.serper.search_events(
+                query=prompt,
+                location=request.location,
+                date_from=date_from_str,
+                category=category_value,
+            )
 
-        # Handle exceptions
-        if isinstance(perplexity_result, Exception):
-            logger.error(f"Perplexity search failed: {perplexity_result}")
-            perplexity_result = None
-        if isinstance(serpapi_result, Exception):
-            logger.error(f"SerpAPI search failed: {serpapi_result}")
-            serpapi_result = None
+        if self.firecrawl:
+            tasks["firecrawl"] = self.firecrawl.search_events(
+                query=prompt,
+                location=request.location,
+                date_from=date_from_str,
+                category=category_value,
+            )
 
-        # Log tool calls
-        state.log_tool_call(
-            tool_name="perplexity",
-            action="search_events",
-            success=perplexity_result is not None and perplexity_result.success,
-            result_summary=f"Found {len(perplexity_result.sources) if perplexity_result else 0} sources",
-        )
+        if self.exa:
+            tasks["exa"] = self.exa.search_events(
+                query=prompt,
+                location=request.location,
+                date_from=date_from_str,
+                category=category_value,
+            )
 
-        state.log_tool_call(
-            tool_name="serpapi",
-            action="search_events",
-            success=serpapi_result is not None and serpapi_result.success,
-            result_summary=f"Found {len(serpapi_result.results) if serpapi_result else 0} results",
-        )
+        if self.ticketmaster:
+            tasks["ticketmaster"] = self.ticketmaster.search_events(
+                query=prompt,
+                location=request.location,
+                date_from=date_from_str,
+                date_to=date_to_str if date_to_str else None,
+                category=category_value,
+            )
 
-        # Merge results
+        # Run ALL available searches in parallel
+        task_names = list(tasks.keys())
+        task_coros = list(tasks.values())
+
+        logger.info(f"Running {len(task_names)} search providers in parallel: {task_names}")
+        raw_results = await asyncio.gather(*task_coros, return_exceptions=True)
+
+        # Map back to named results, handling exceptions
+        providers: dict[str, Any] = {}
+        for name, result in zip(task_names, raw_results):
+            if isinstance(result, Exception):
+                logger.error(f"{name} search failed: {result}")
+                providers[name] = None
+            else:
+                providers[name] = result
+
+        # Log tool calls for all providers
+        for name, result in providers.items():
+            success = result is not None and hasattr(result, 'success') and result.success
+            state.log_tool_call(
+                tool_name=name,
+                action="search_events",
+                success=success,
+                result_summary=f"Success: {success}",
+            )
+
+        # Merge all results
         logger.info("========== MERGING SEARCH RESULTS ==========")
         merged = self.merger.merge(
-            perplexity_result=perplexity_result,
-            serpapi_result=serpapi_result,
+            perplexity_result=providers.get("perplexity"),
+            serpapi_result=providers.get("serpapi"),
+            serper_result=providers.get("serper"),
+            firecrawl_result=providers.get("firecrawl"),
+            exa_result=providers.get("exa"),
+            ticketmaster_result=providers.get("ticketmaster"),
             max_results=request.results_count,
         )
 
-        logger.info(f"[MERGER] Perplexity success: {merged.perplexity_success}")
-        logger.info(f"[MERGER] SerpAPI success: {merged.serpapi_success}")
-        logger.info(f"[MERGER] Total merged results: {len(merged.results)}")
         logger.info(f"[MERGER] Sources used: {merged.sources_used}")
+        logger.info(f"[MERGER] Total merged results: {len(merged.results)}")
+        logger.info(f"[MERGER] Raw total: {merged.total_raw_results}, After dedup: {merged.total_after_dedup}")
 
-        # Log each merged result
-        for i, result in enumerate(merged.results[:10]):  # Log first 10
+        # Log first 10 merged results
+        for i, result in enumerate(merged.results[:10]):
             logger.info(f"[MERGER]   Result {i+1}: {result.title[:50] if result.title else 'No title'}... URL: {result.url[:60] if result.url else 'No URL'}")
 
         # Update state
         state.search_state.perplexity_success = merged.perplexity_success
         state.search_state.serpapi_success = merged.serpapi_success
+        state.search_state.serper_success = merged.serper_success
+        state.search_state.firecrawl_success = merged.firecrawl_success
+        state.search_state.exa_success = merged.exa_success
+        state.search_state.ticketmaster_success = merged.ticketmaster_success
         state.search_state.merged_results = self.merger.to_raw_list(merged)
 
         return merged
@@ -743,12 +794,12 @@ class AgentOrchestrator:
 
         # Determine source
         sources = raw.get("sources", [])
-        if "perplexity" in sources:
-            source_api = DataSource.PERPLEXITY
-        elif "serpapi" in sources:
-            source_api = DataSource.SERPAPI
-        else:
-            source_api = DataSource.SCRAPER
+        source_api = DataSource.SCRAPER  # default
+        source_str = " ".join(sources)
+        for name in ["ticketmaster", "perplexity", "serpapi", "serper", "firecrawl", "exa"]:
+            if name in source_str:
+                source_api = DataSource(name)
+                break
 
         return EventResult(
             event_id=f"evt_{uuid.uuid4().hex[:8]}",
@@ -796,5 +847,13 @@ class AgentOrchestrator:
         """Clean up resources."""
         await self.perplexity.close()
         await self.serpapi.close()
+        if self.serper:
+            await self.serper.close()
+        if self.firecrawl:
+            await self.firecrawl.close()
+        if self.exa:
+            await self.exa.close()
+        if self.ticketmaster:
+            await self.ticketmaster.close()
         if self.scraper:
             await self.scraper.close()

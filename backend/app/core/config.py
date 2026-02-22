@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Search API Keys
     perplexity_api_key: str = Field(default="", description="Perplexity API key")
     serpapi_api_key: str = Field(default="", description="SerpAPI key")
+    serper_api_key: str = Field(default="", description="SerperAPI key")
+    firecrawl_api_key: str = Field(default="", description="Firecrawl API key")
+    exa_api_key: str = Field(default="", description="Exa API key")
+    ticketmaster_api_key: str = Field(default="", description="Ticketmaster API key")
 
     # Weather API (optional)
     openweather_api_key: str = Field(default="", description="OpenWeatherMap API key (optional)")
@@ -61,7 +65,7 @@ class Settings(BaseSettings):
     rate_limit_per_day: int = 1000
 
     # Search Defaults
-    default_results_count: int = 20
+    default_results_count: int = 50
     default_radius_km: int = 25
     default_cache_ttl_seconds: int = 3600
 

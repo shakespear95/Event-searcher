@@ -61,10 +61,18 @@ class SearchState(BaseModel):
 
     perplexity_results: list[dict[str, Any]] = Field(default_factory=list)
     serpapi_results: list[dict[str, Any]] = Field(default_factory=list)
+    serper_results: list[dict[str, Any]] = Field(default_factory=list)
+    firecrawl_results: list[dict[str, Any]] = Field(default_factory=list)
+    exa_results: list[dict[str, Any]] = Field(default_factory=list)
+    ticketmaster_results: list[dict[str, Any]] = Field(default_factory=list)
     scraped_results: list[dict[str, Any]] = Field(default_factory=list)
     merged_results: list[dict[str, Any]] = Field(default_factory=list)
     perplexity_success: bool = False
     serpapi_success: bool = False
+    serper_success: bool = False
+    firecrawl_success: bool = False
+    exa_success: bool = False
+    ticketmaster_success: bool = False
     scraper_success: bool = False
 
 

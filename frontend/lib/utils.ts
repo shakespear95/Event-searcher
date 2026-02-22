@@ -198,13 +198,11 @@ export function computeDateRange(timeRange: string): { dateFrom?: string; dateTo
       }
     }
     case 'nextWeek': {
-      const nextMonday = new Date(today)
-      nextMonday.setDate(nextMonday.getDate() + (8 - nextMonday.getDay()))
-      const nextSunday = new Date(nextMonday)
-      nextSunday.setDate(nextSunday.getDate() + 6)
+      const endDate = new Date(today)
+      endDate.setDate(endDate.getDate() + 7)
       return {
-        dateFrom: nextMonday.toISOString().split('T')[0],
-        dateTo: nextSunday.toISOString().split('T')[0]
+        dateFrom: today.toISOString().split('T')[0],
+        dateTo: endDate.toISOString().split('T')[0]
       }
     }
     case 'nextMonth': {

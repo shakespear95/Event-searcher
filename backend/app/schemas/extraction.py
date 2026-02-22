@@ -37,7 +37,8 @@ CRITICAL RULES:
 2. SKIP any event without a clear date - do NOT include events with unknown or unspecified dates
 3. NEVER make up or guess dates - only use what's explicitly in the content
 4. Every event MUST have: name, date, city, country, and source_url
-5. Quality over quantity - 5 complete events is better than 15 incomplete ones
+5. Extract as many valid events as possible - more is better when they have verified dates
+6. STRICT DATE ADHERENCE: Only include events that fall within the requested search date range. Discard events outside the range.
 
 For each event with a confirmed date, extract:
 - name: The event title/name (REQUIRED)
@@ -74,10 +75,14 @@ EXTRACTION_USER_PROMPT = """Extract events WITH SPECIFIC DATES from the followin
 --- SOURCE URLS ---
 {source_urls}
 
---- ADDITIONAL CONTEXT FROM SERPAPI ---
+--- ADDITIONAL CONTEXT FROM SEARCH PROVIDERS ---
 {serpapi_snippets}
 
-IMPORTANT: Only extract events that have a clear, specific date mentioned.
-Skip any event without a confirmed date - do not guess or make up dates.
-Each event MUST have: name, date, city, country, and source_url.
+IMPORTANT:
+- Only extract events that have a clear, specific date mentioned.
+- Skip any event without a confirmed date - do not guess or make up dates.
+- Each event MUST have: name, date, city, country, and source_url.
+- STRICT DATE RANGE: Only include events within the requested date range for {location}.
+- If a Ticketmaster URL is the source, it is high confidence - prioritize those events.
+- Extract as many valid events as possible from all the sources above.
 Return valid JSON only."""

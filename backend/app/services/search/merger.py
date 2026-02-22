@@ -1,6 +1,6 @@
 """
 Search Result Merger.
-Combines and deduplicates results from Perplexity and SerpAPI.
+Combines and deduplicates results from all search sources.
 """
 import re
 from dataclasses import dataclass, field
@@ -11,6 +11,10 @@ from app.core.logging import get_logger
 
 from .perplexity import PerplexityResult
 from .serpapi import SerpAPIResult, SerpAPIResultItem
+from .serper import SerperResult
+from .firecrawl import FirecrawlResult
+from .exa import ExaResult
+from .ticketmaster import TicketmasterResult
 
 logger = get_logger("search.merger")
 
@@ -36,6 +40,10 @@ class MergedSearchResults:
     results: list[MergedResult] = field(default_factory=list)
     perplexity_success: bool = False
     serpapi_success: bool = False
+    serper_success: bool = False
+    firecrawl_success: bool = False
+    exa_success: bool = False
+    ticketmaster_success: bool = False
     total_raw_results: int = 0
     total_after_dedup: int = 0
     sources_used: list[str] = field(default_factory=list)
@@ -93,6 +101,14 @@ class SearchMerger:
         # Only track non-empty titles
         if title and title.strip():
             self.seen_titles.add(self._normalize_title(title))
+
+    def _find_existing(self, results: list[MergedResult], url: str) -> MergedResult | None:
+        """Find an existing result by normalized URL."""
+        norm_url = self._normalize_url(url)
+        return next(
+            (r for r in results if self._normalize_url(r.url) == norm_url),
+            None,
+        )
 
     def _parse_events_from_content(self, content: str) -> list[dict[str, str]]:
         """Parse structured events from Perplexity markdown content.
@@ -174,15 +190,24 @@ class SearchMerger:
         self,
         perplexity_result: PerplexityResult | None,
         serpapi_result: SerpAPIResult | None,
-        max_results: int = 20,
+        serper_result: SerperResult | None = None,
+        firecrawl_result: FirecrawlResult | None = None,
+        exa_result: ExaResult | None = None,
+        ticketmaster_result: TicketmasterResult | None = None,
+        max_results: int = 50,
     ) -> MergedSearchResults:
         """
-        Merge results from Perplexity and SerpAPI.
+        Merge results from all search sources.
 
-        Priority:
-        1. Results found in both sources (higher confidence)
-        2. Perplexity results (synthesized with context)
-        3. SerpAPI results (raw Google results)
+        Priority / confidence scores:
+        - Multi-source (found in 2+): base + 0.2 per additional, capped at 1.0
+        - Ticketmaster: 0.85 (structured event data)
+        - Google Events (SerpAPI): 0.8
+        - Perplexity: 0.7
+        - Firecrawl: 0.6
+        - Exa: 0.55
+        - SerpAPI organic: 0.5
+        - Serper organic: 0.5
         """
         self.seen_urls.clear()
         self.seen_titles.clear()
@@ -199,6 +224,22 @@ class SearchMerger:
             merged.serpapi_success = True
             merged.sources_used.append("serpapi")
 
+        if serper_result and serper_result.success:
+            merged.serper_success = True
+            merged.sources_used.append("serper")
+
+        if firecrawl_result and firecrawl_result.success:
+            merged.firecrawl_success = True
+            merged.sources_used.append("firecrawl")
+
+        if exa_result and exa_result.success:
+            merged.exa_success = True
+            merged.sources_used.append("exa")
+
+        if ticketmaster_result and ticketmaster_result.success:
+            merged.ticketmaster_success = True
+            merged.sources_used.append("ticketmaster")
+
         # Parse events from Perplexity content to enrich results
         parsed_events: list[dict[str, str]] = []
         if perplexity_result and perplexity_result.success and perplexity_result.content:
@@ -207,7 +248,7 @@ class SearchMerger:
             for i, pe in enumerate(parsed_events):
                 logger.info(f"[MERGER]   Parsed event {i+1}: {pe.get('name', 'unnamed')[:60]}")
 
-        # Process Perplexity sources first
+        # === Process Perplexity sources first ===
         if perplexity_result and perplexity_result.success:
             for idx, source_url in enumerate(perplexity_result.sources):
                 if not self._is_duplicate(source_url, ""):
@@ -239,21 +280,14 @@ class SearchMerger:
 
             merged.total_raw_results += len(perplexity_result.sources)
 
-        # Process SerpAPI results
+        # === Process SerpAPI results ===
         if serpapi_result and serpapi_result.success:
             for item in serpapi_result.results:
                 if not item.link:
                     continue
 
-                # Check if this URL was already found by Perplexity
-                norm_url = self._normalize_url(item.link)
-                existing = next(
-                    (r for r in results if self._normalize_url(r.url) == norm_url),
-                    None,
-                )
-
+                existing = self._find_existing(results, item.link)
                 if existing:
-                    # Enrich existing result
                     existing.title = item.title
                     existing.snippet = item.snippet
                     existing.sources.append("serpapi")
@@ -262,7 +296,7 @@ class SearchMerger:
                         "displayed_link": item.displayed_link,
                         "date": item.date,
                     }
-                    existing.confidence_score = 0.9  # Found in both sources
+                    existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
                 elif not self._is_duplicate(item.link, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -297,6 +331,127 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(event_url, event_title)
+
+        # === Process Serper results ===
+        if serper_result and serper_result.success:
+            for item in serper_result.results:
+                if not item.link:
+                    continue
+
+                existing = self._find_existing(results, item.link)
+                if existing:
+                    existing.sources.append("serper")
+                    existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                elif not self._is_duplicate(item.link, item.title):
+                    result = MergedResult(
+                        title=item.title,
+                        url=item.link,
+                        snippet=item.snippet,
+                        sources=["serper"],
+                        confidence_score=0.5,
+                    )
+                    results.append(result)
+                    self._mark_seen(item.link, item.title)
+
+            merged.total_raw_results += len(serper_result.results)
+
+        # === Process Firecrawl results ===
+        if firecrawl_result and firecrawl_result.success:
+            for item in firecrawl_result.results:
+                if not item.url:
+                    continue
+
+                existing = self._find_existing(results, item.url)
+                if existing:
+                    existing.sources.append("firecrawl")
+                    existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                    # Enrich with Firecrawl's markdown content if richer
+                    if item.content and len(item.content) > len(existing.snippet or ""):
+                        existing.snippet = item.content[:500]
+                elif not self._is_duplicate(item.url, item.title):
+                    result = MergedResult(
+                        title=item.title,
+                        url=item.url,
+                        snippet=item.content[:500] if item.content else "",
+                        sources=["firecrawl"],
+                        confidence_score=0.6,
+                    )
+                    results.append(result)
+                    self._mark_seen(item.url, item.title)
+
+            merged.total_raw_results += len(firecrawl_result.results)
+
+        # === Process Exa results ===
+        if exa_result and exa_result.success:
+            for item in exa_result.results:
+                if not item.url:
+                    continue
+
+                existing = self._find_existing(results, item.url)
+                if existing:
+                    existing.sources.append("exa")
+                    existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                elif not self._is_duplicate(item.url, item.title):
+                    result = MergedResult(
+                        title=item.title,
+                        url=item.url,
+                        snippet=item.text[:500] if item.text else "",
+                        sources=["exa"],
+                        confidence_score=0.55,
+                    )
+                    results.append(result)
+                    self._mark_seen(item.url, item.title)
+
+            merged.total_raw_results += len(exa_result.results)
+
+        # === Process Ticketmaster results (highest confidence -- structured event data) ===
+        if ticketmaster_result and ticketmaster_result.success:
+            for event in ticketmaster_result.events:
+                if not event.url:
+                    continue
+
+                existing = self._find_existing(results, event.url)
+                if existing:
+                    existing.sources.append("ticketmaster")
+                    existing.confidence_score = max(existing.confidence_score, 0.85)
+                elif not self._is_duplicate(event.url, event.name):
+                    # Build rich snippet from structured Ticketmaster data
+                    snippet_parts = []
+                    if event.date:
+                        snippet_parts.append(f"Date: {event.date}")
+                    if event.time:
+                        snippet_parts.append(f"Time: {event.time}")
+                    if event.venue_name:
+                        snippet_parts.append(f"Venue: {event.venue_name}")
+                    if event.price_min is not None:
+                        price_str = f"${event.price_min}"
+                        if event.price_max and event.price_max != event.price_min:
+                            price_str += f" - ${event.price_max}"
+                        snippet_parts.append(f"Price: {price_str}")
+
+                    result = MergedResult(
+                        title=event.name,
+                        url=event.url,
+                        snippet=" | ".join(snippet_parts),
+                        sources=["ticketmaster"],
+                        serpapi_data={
+                            "date": event.date,
+                            "time": event.time,
+                            "venue_name": event.venue_name,
+                            "venue_address": event.venue_address,
+                            "venue_city": event.venue_city,
+                            "venue_country": event.venue_country,
+                            "price_min": event.price_min,
+                            "price_max": event.price_max,
+                            "image_url": event.image_url,
+                            "category": event.category,
+                        },
+                        confidence_score=0.85,
+                    )
+                    results.append(result)
+                    self._mark_seen(event.url, event.name)
+
+            merged.total_raw_results += len(ticketmaster_result.events)
 
         # Sort by confidence score
         results.sort(key=lambda x: x.confidence_score, reverse=True)
@@ -340,7 +495,7 @@ class SearchMerger:
         return [r.url for r in merged.results]
 
     def get_serpapi_snippets(self, merged: MergedSearchResults) -> str:
-        """Get concatenated SerpAPI snippets for context."""
+        """Get concatenated snippets from all sources for context."""
         snippets = []
         for r in merged.results:
             if r.snippet:

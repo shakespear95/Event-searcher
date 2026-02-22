@@ -28,7 +28,7 @@ class SearchRequest(BaseModel):
         default="all", description="Event category filter"
     )
     results_count: int = Field(
-        default=20, ge=1, le=20, description="Number of results (max 20)"
+        default=50, ge=1, le=50, description="Number of results (max 50)"
     )
 
     # Location parameters

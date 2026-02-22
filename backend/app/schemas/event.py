@@ -73,6 +73,10 @@ class DataSource(str, Enum):
 
     PERPLEXITY = "perplexity"
     SERPAPI = "serpapi"
+    SERPER = "serper"
+    FIRECRAWL = "firecrawl"
+    EXA = "exa"
+    TICKETMASTER = "ticketmaster"
     SCRAPER = "scraper"
     MANUAL = "manual"
 
