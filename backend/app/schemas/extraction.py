@@ -50,7 +50,7 @@ For each event with a confirmed date, extract:
 - city: City name (REQUIRED - use the search location if not specified)
 - country: Country name (REQUIRED - use Switzerland for Swiss cities like Zurich, Bern, Basel, etc.)
 - price: Price information if mentioned
-- category: Type of event (concert, party, exhibition, sports, etc.)
+- category: MUST be one of: music, sports, theater, arts_culture, food_drinks, nightlife, comedy, workshops, family, festivals, markets, networking, wellness, nature, tech_gaming, community
 - source_url: The URL where this event was found (REQUIRED - use one from SOURCE URLS)
 - image_url: Image URL if available
 
@@ -67,7 +67,10 @@ Return a JSON object with:
 }"""
 
 
-EXTRACTION_USER_PROMPT = """Extract events WITH SPECIFIC DATES from the following search results for {location}:
+EXTRACTION_USER_PROMPT = """Extract events WITH SPECIFIC DATES from the following search results for {location}.
+
+REQUESTED DATE RANGE: {date_from} to {date_to}
+ONLY include events that fall on or between these dates. Discard all others.
 
 --- PERPLEXITY CONTENT ---
 {perplexity_content}
@@ -82,7 +85,8 @@ IMPORTANT:
 - Only extract events that have a clear, specific date mentioned.
 - Skip any event without a confirmed date - do not guess or make up dates.
 - Each event MUST have: name, date, city, country, and source_url.
-- STRICT DATE RANGE: Only include events within the requested date range for {location}.
+- STRICT DATE RANGE: Only include events between {date_from} and {date_to}. Reject events outside this range.
+- For category, use one of: music, sports, theater, arts_culture, food_drinks, nightlife, comedy, workshops, family, festivals, markets, networking, wellness, nature, tech_gaming, community
 - If a Ticketmaster URL is the source, it is high confidence - prioritize those events.
 - Extract as many valid events as possible from all the sources above.
 Return valid JSON only."""

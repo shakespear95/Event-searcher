@@ -436,8 +436,12 @@ class AgentOrchestrator:
             return []
 
         # Build extraction prompt
+        date_from_str = str(request.date_from) if request.date_from else "any"
+        date_to_str = str(request.date_to) if request.date_to else date_from_str
         extraction_prompt = EXTRACTION_USER_PROMPT.format(
             location=request.location,
+            date_from=date_from_str,
+            date_to=date_to_str,
             perplexity_content=perplexity_content or "No content available",
             source_urls="\n".join(source_urls) if source_urls else "No URLs",
             serpapi_snippets=serpapi_snippets or "No snippets",
@@ -596,6 +600,70 @@ class AgentOrchestrator:
 
         return events[:request.results_count]
 
+    def _map_category(self, raw_category: str | None, request_category: str) -> "EventCategory":
+        """Map an extracted category string to the EventCategory enum."""
+        from app.schemas.event import EventCategory
+
+        if not raw_category:
+            if request_category and request_category != "all":
+                try:
+                    return EventCategory(request_category)
+                except ValueError:
+                    pass
+            return EventCategory.COMMUNITY
+
+        cat = raw_category.lower().strip()
+
+        # Direct enum match
+        try:
+            return EventCategory(cat)
+        except ValueError:
+            pass
+
+        # Keyword-based mapping
+        keyword_map = {
+            EventCategory.MUSIC: ["music", "concert", "jazz", "rock", "pop", "classical", "opera", "dj", "band", "orchestra", "piano", "live music", "hip-hop", "electronic"],
+            EventCategory.THEATER: ["theater", "theatre", "play", "drama", "musical", "ballet", "dance", "performance", "show"],
+            EventCategory.ARTS_CULTURE: ["art", "exhibition", "gallery", "museum", "culture", "painting", "sculpture", "photography"],
+            EventCategory.SPORTS: ["sport", "football", "soccer", "basketball", "tennis", "hockey", "match", "game", "race", "marathon", "fitness"],
+            EventCategory.FOOD_DRINKS: ["food", "drink", "wine", "beer", "tasting", "culinary", "cooking", "restaurant", "dining", "brunch"],
+            EventCategory.NIGHTLIFE: ["nightlife", "club", "party", "rave", "bar", "lounge", "nightclub"],
+            EventCategory.COMEDY: ["comedy", "standup", "stand-up", "improv", "humor"],
+            EventCategory.WORKSHOPS: ["workshop", "class", "seminar", "course", "lecture", "talk", "training", "tutorial"],
+            EventCategory.FAMILY: ["family", "kids", "children", "child"],
+            EventCategory.FESTIVALS: ["festival", "carnival", "fair", "fête", "fete"],
+            EventCategory.MARKETS: ["market", "flea", "bazaar", "craft"],
+            EventCategory.NETWORKING: ["networking", "meetup", "conference", "business", "startup"],
+            EventCategory.WELLNESS: ["wellness", "yoga", "meditation", "spa", "health", "mindfulness"],
+            EventCategory.NATURE: ["nature", "outdoor", "hiking", "garden", "park"],
+            EventCategory.TECH_GAMING: ["tech", "gaming", "hackathon", "esports", "code"],
+        }
+
+        for enum_val, keywords in keyword_map.items():
+            for kw in keywords:
+                if kw in cat:
+                    return enum_val
+
+        # Fall back to request category
+        if request_category and request_category != "all":
+            try:
+                return EventCategory(request_category)
+            except ValueError:
+                pass
+
+        return EventCategory.COMMUNITY
+
+    def _detect_source_api(self, source_url: str) -> DataSource:
+        """Detect which API a source URL likely came from."""
+        if not source_url:
+            return DataSource.PERPLEXITY
+
+        url_lower = source_url.lower()
+        if "ticketmaster.com" in url_lower or "livenation.com" in url_lower:
+            return DataSource.TICKETMASTER
+        # Default to perplexity since it's the primary content source
+        return DataSource.PERPLEXITY
+
     def _create_event_from_extracted(
         self,
         extracted,
@@ -608,7 +676,6 @@ class AgentOrchestrator:
             EventLocation,
             EventTiming,
             EventPricing,
-            EventCategory,
         )
 
         # Validate source URL
@@ -620,16 +687,8 @@ class AgentOrchestrator:
             else:
                 return None
 
-        # Determine category
-        try:
-            if extracted.category:
-                category = EventCategory(extracted.category.lower())
-            elif request.category != "all":
-                category = EventCategory(request.category)
-            else:
-                category = EventCategory.COMMUNITY
-        except ValueError:
-            category = EventCategory.COMMUNITY
+        # Determine category using keyword mapping
+        category = self._map_category(extracted.category, request.category)
 
         # Parse timing
         start_datetime = datetime.combine(request.date_from, datetime.min.time())
@@ -651,6 +710,15 @@ class AgentOrchestrator:
             except Exception:
                 pass  # Keep default date
 
+        # --- Date range filter: skip events outside the requested range ---
+        event_date = start_datetime.date() if isinstance(start_datetime, datetime) else start_datetime
+        if request.date_from and event_date < request.date_from:
+            logger.info(f"[DATE-FILTER] Skipping '{extracted.name}' - date {event_date} before {request.date_from}")
+            return None
+        if request.date_to and event_date > request.date_to:
+            logger.info(f"[DATE-FILTER] Skipping '{extracted.name}' - date {event_date} after {request.date_to}")
+            return None
+
         # Parse pricing
         is_free = False
         price_min = None
@@ -658,6 +726,9 @@ class AgentOrchestrator:
         if extracted.price:
             price_lower = extracted.price.lower()
             is_free = "free" in price_lower or price_lower == "0"
+
+        # Detect source API from URL
+        source_api = self._detect_source_api(source_url)
 
         return EventResult(
             event_id=f"evt_{uuid.uuid4().hex[:8]}",
@@ -681,7 +752,7 @@ class AgentOrchestrator:
             ),
             source=EventSource(
                 source_url=source_url,
-                source_api=DataSource.PERPLEXITY,
+                source_api=source_api,
                 verified=True,
             ),
             image_url=extracted.image_url,
