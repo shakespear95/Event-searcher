@@ -548,136 +548,214 @@ class AgentOrchestrator:
         logger.info(f"[DIRECT] Total structured events converted directly: {len(direct_events)}")
         return direct_events
 
+    def _convert_all_merged_results(
+        self,
+        merged_results: MergedSearchResults,
+        request: SearchRequest,
+    ) -> list[EventResult]:
+        """Convert ALL merged results directly to EventResult objects.
+        Uses whatever data is available — title, snippet, serpapi_data.
+        No filtering — every result becomes an event."""
+        from app.schemas.event import EventLocation, EventTiming, EventPricing
+
+        events: list[EventResult] = []
+        city = request.location.split(",")[0].strip()
+        country = request.location.split(",")[-1].strip() if "," in request.location else "Unknown"
+
+        for i, result in enumerate(merged_results.results):
+            data = result.serpapi_data if isinstance(result.serpapi_data, dict) else {}
+
+            # --- Parse date ---
+            date_str = data.get("date") or data.get("localDate") or ""
+            time_str = data.get("time") or data.get("localTime") or ""
+            parsed_dt = None
+
+            # Try from structured data first
+            if date_str:
+                try:
+                    from dateutil import parser as dateparser
+                    parsed_dt = dateparser.parse(date_str, fuzzy=True)
+                    if time_str:
+                        try:
+                            parsed_time = dateparser.parse(time_str, fuzzy=True)
+                            parsed_dt = datetime.combine(parsed_dt.date(), parsed_time.time())
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # Try parsing date from snippet
+            if not parsed_dt and result.snippet:
+                try:
+                    from dateutil import parser as dateparser
+                    # Look for date patterns in snippet
+                    import re
+                    date_patterns = re.findall(
+                        r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{4}\b',
+                        result.snippet,
+                        re.IGNORECASE,
+                    )
+                    if date_patterns:
+                        parsed_dt = dateparser.parse(date_patterns[0], fuzzy=True)
+                except Exception:
+                    pass
+
+            # Try parsing date from title
+            if not parsed_dt and result.title:
+                try:
+                    from dateutil import parser as dateparser
+                    import re
+                    date_patterns = re.findall(
+                        r'\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{4}\b',
+                        result.title,
+                        re.IGNORECASE,
+                    )
+                    if date_patterns:
+                        parsed_dt = dateparser.parse(date_patterns[0], fuzzy=True)
+                except Exception:
+                    pass
+
+            # Default to request date if nothing found
+            if not parsed_dt:
+                parsed_dt = datetime.combine(request.date_from, datetime.min.time())
+
+            # --- Parse venue ---
+            venue_name = data.get("venue_name") or None
+            # Try to extract venue from snippet if not in structured data
+            if not venue_name and result.snippet:
+                import re
+                venue_match = re.search(r'Venue:\s*([^|,\n]+)', result.snippet)
+                if venue_match:
+                    venue_name = venue_match.group(1).strip()
+
+            # --- Category ---
+            category = self._map_category(data.get("category"), request.category)
+
+            # --- Pricing ---
+            is_free = False
+            price_min = data.get("price_min")
+            price_max = data.get("price_max")
+            price_info = None
+            if price_min is not None:
+                price_info = f"${price_min}"
+                if price_max and price_max != price_min:
+                    price_info += f" - ${price_max}"
+            elif result.snippet:
+                import re
+                price_match = re.search(r'Price:\s*([^|,\n]+)', result.snippet)
+                if price_match:
+                    price_info = price_match.group(1).strip()
+                    is_free = "free" in price_info.lower()
+
+            # --- Source ---
+            source_api = self._detect_source_api(result.url)
+
+            # --- Event name ---
+            event_name = result.title or data.get("title") or f"Event in {city}"
+
+            event = EventResult(
+                event_id=f"evt_{uuid.uuid4().hex[:8]}",
+                event_name=event_name,
+                description=data.get("description") or result.snippet or None,
+                category=category,
+                location=EventLocation(
+                    venue_name=venue_name,
+                    address=data.get("venue_address"),
+                    city=data.get("venue_city") or city,
+                    country=data.get("venue_country") or country,
+                ),
+                timing=EventTiming(start_datetime=parsed_dt),
+                pricing=EventPricing(
+                    is_free=is_free,
+                    price_min=price_min,
+                    price_max=price_max,
+                    price_info=price_info,
+                ),
+                source=EventSource(
+                    source_url=result.url,
+                    source_api=source_api,
+                    verified=True,
+                ),
+                image_url=data.get("image_url"),
+                relevance_score=result.confidence_score,
+                is_hidden_gem=request.hidden_gems,
+            )
+            events.append(event)
+
+        logger.info(f"[DIRECT] Converted ALL {len(events)} merged results to events")
+        return events
+
     async def _process_results(
         self,
         merged_results: MergedSearchResults,
         request: SearchRequest,
         state: GlobalState,
     ) -> list[EventResult]:
-        """Process raw results into structured EventResult objects.
-        Structured data (Ticketmaster, Google Events) is converted directly.
-        Remaining results go through Claude extraction."""
+        """Convert ALL merged results directly to events.
+        Claude is used only to enrich events that are missing names/details."""
         logger.info("========== PROCESSING START ==========")
 
         if not merged_results.results:
             logger.warning("No merged results to process")
             return []
 
-        # Step 1: Direct conversion of structured events (Ticketmaster, Google Events)
-        direct_events = self._convert_structured_events(merged_results, request)
-        direct_names = {e.event_name.lower() for e in direct_events}
+        # Step 1: Convert ALL merged results directly to EventResult
+        all_events = self._convert_all_merged_results(merged_results, request)
+        logger.info(f"[PROCESSING] Converted {len(all_events)} events directly (0% drop)")
 
-        logger.info(f"[PROCESSING] {len(direct_events)} events converted directly from structured data")
-        logger.info(f"[CLAUDE] Processing {len(merged_results.results)} raw results for additional extraction")
+        # Step 2: Use Claude to fill in blanks on events missing good names
+        events_needing_enrichment = [
+            e for e in all_events
+            if not e.event_name or e.event_name.startswith("Event in ")
+        ]
 
-        # Get data for extraction
-        perplexity_content = self.merger.get_perplexity_content(merged_results)
-        source_urls = self.merger.get_source_urls(merged_results)
-        serpapi_snippets = self.merger.get_serpapi_snippets(merged_results)
+        if events_needing_enrichment:
+            logger.info(f"[CLAUDE] {len(events_needing_enrichment)} events need name enrichment")
+            try:
+                await self._enrich_event_names(events_needing_enrichment, request, state)
+            except Exception as e:
+                logger.warning(f"[CLAUDE] Enrichment failed (non-fatal): {e}")
 
-        logger.info(f"[CLAUDE] Perplexity content length: {len(perplexity_content) if perplexity_content else 0} chars")
-        logger.info(f"[CLAUDE] Source URLs count: {len(source_urls)}")
-        logger.info(f"[CLAUDE] SerpAPI snippets length: {len(serpapi_snippets) if serpapi_snippets else 0} chars")
+        logger.info(f"========== PROCESSING COMPLETE ==========")
+        logger.info(f"[PROCESSING] Final event count: {len(all_events)}")
+        return all_events[:request.results_count]
 
-        if perplexity_content:
-            logger.info(f"[CLAUDE] Perplexity content preview: {perplexity_content[:300]}...")
-        if serpapi_snippets:
-            logger.info(f"[CLAUDE] SerpAPI snippets preview: {serpapi_snippets[:300]}...")
-
-        if not perplexity_content and not serpapi_snippets:
-            logger.warning("[CLAUDE] No content available for extraction")
-            return []
-
-        # Build extraction prompt
-        date_from_str = str(request.date_from) if request.date_from else "any"
-        date_to_str = str(request.date_to) if request.date_to else date_from_str
-        extraction_prompt = EXTRACTION_USER_PROMPT.format(
-            location=request.location,
-            date_from=date_from_str,
-            date_to=date_to_str,
-            perplexity_content=perplexity_content or "No content available",
-            source_urls="\n".join(source_urls) if source_urls else "No URLs",
-            serpapi_snippets=serpapi_snippets or "No snippets",
+    async def _enrich_event_names(
+        self,
+        events: list[EventResult],
+        request: SearchRequest,
+        state: GlobalState,
+    ) -> None:
+        """Use Claude to fill in missing event names from their source URLs."""
+        urls_info = "\n".join(
+            f"- {e.source.source_url} (current name: {e.event_name})"
+            for e in events[:20]  # Cap at 20 to keep prompt small
         )
 
-        # Use Claude to extract structured events
+        prompt = f"""Given these event page URLs for events in {request.location}, suggest better event names based on the URL patterns.
+Return a JSON array of objects with "url" and "name" fields.
+
+URLs:
+{urls_info}
+
+Return valid JSON only: [{{"url": "...", "name": "..."}}]"""
+
         try:
-            extracted, response = await self.claude.generate_structured(
-                prompt=extraction_prompt,
-                output_schema=ExtractedEventsResponse,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
-            )
-
-            state.log_llm_call(
-                provider="claude",
-                model=self.claude.default_model,
-                purpose="extract_events",
-                success=response.success,
-            )
-
-            if not extracted or not response.success:
-                logger.warning(f"[CLAUDE] Extraction failed: {response.error}")
-                # Fallback to basic processing + direct events
-                fallback = self._fallback_process_results(merged_results, request, state)
-                all_events = direct_events + [e for e in fallback if e.event_name.lower() not in direct_names]
-                return all_events[:request.results_count]
-
-            logger.info(f"[CLAUDE] Extraction successful! Found {len(extracted.events)} events")
-
-            # Convert ExtractedEvent to EventResult - filter out events without dates
-            claude_events = []
-            skipped_no_date = 0
-            skipped_duplicate = 0
-            for i, extracted_event in enumerate(extracted.events):
-                logger.info(f"[CLAUDE]   Event {i+1}: {extracted_event.name[:50] if extracted_event.name else 'No name'}...")
-                logger.info(f"[CLAUDE]     Date: {extracted_event.date}, Venue: {extracted_event.venue}")
-                logger.info(f"[CLAUDE]     Source: {extracted_event.source_url[:60] if extracted_event.source_url else 'No URL'}")
-
-                # Skip events without dates
-                if not extracted_event.date or extracted_event.date.lower() in ['none', 'null', 'unknown', 'tbd', 'n/a', '']:
-                    logger.info(f"[CLAUDE]     SKIPPED - no valid date")
-                    skipped_no_date += 1
-                    continue
-
-                # Skip if already in direct events
-                if extracted_event.name and extracted_event.name.lower() in direct_names:
-                    logger.info(f"[CLAUDE]     SKIPPED - already in direct events")
-                    skipped_duplicate += 1
-                    continue
-
-                try:
-                    event = self._create_event_from_extracted(
-                        extracted_event, request, source_urls, i
-                    )
-                    if event:
-                        claude_events.append(event)
-                        state.log_tool_call(
-                            tool_name="processor",
-                            action="create_event",
-                            success=True,
-                            source_url=extracted_event.source_url,
-                        )
-                except Exception as e:
-                    state.add_warning(f"Failed to convert extracted event {i}: {e}")
-                    logger.warning(f"[CLAUDE] Failed to convert event: {e}")
-
-            if skipped_no_date > 0:
-                logger.info(f"[CLAUDE] Skipped {skipped_no_date} events without valid dates")
-            if skipped_duplicate > 0:
-                logger.info(f"[CLAUDE] Skipped {skipped_duplicate} events already in direct results")
-
-            # Merge direct + Claude-extracted events
-            all_events = direct_events + claude_events
-            logger.info(f"========== PROCESSING COMPLETE ==========")
-            logger.info(f"[PROCESSING] Direct events: {len(direct_events)}, Claude events: {len(claude_events)}, Total: {len(all_events)}")
-            return all_events[:request.results_count]
-
+            result = await self.claude.generate(prompt=prompt, max_tokens=2000)
+            if result and result.content:
+                import json
+                import re
+                # Extract JSON from response
+                json_match = re.search(r'\[.*\]', result.content, re.DOTALL)
+                if json_match:
+                    names = json.loads(json_match.group())
+                    url_to_name = {item["url"]: item["name"] for item in names if "url" in item and "name" in item}
+                    for event in events:
+                        if event.source.source_url in url_to_name:
+                            event.event_name = url_to_name[event.source.source_url]
+                            logger.info(f"[CLAUDE] Enriched name: {event.event_name[:50]}...")
         except Exception as e:
-            logger.error(f"Claude extraction error: {e}")
-            state.add_error(f"Extraction failed: {e}")
-            fallback = self._fallback_process_results(merged_results, request, state)
-            all_events = direct_events + [e for e in fallback if e.event_name.lower() not in direct_names]
-            return all_events[:request.results_count]
+            logger.warning(f"[CLAUDE] Name enrichment failed: {e}")
 
     def _parse_events_from_perplexity(self, content: str) -> list[dict[str, str]]:
         """Extract structured event data from Perplexity markdown content."""
