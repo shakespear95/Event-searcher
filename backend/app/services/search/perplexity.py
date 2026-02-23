@@ -221,22 +221,23 @@ Format each event with: Name, Date/Time, Location, Description, Source URL"""
             },
         )
 
-        # Build detailed query - flexible about quantity, strict about quality
-        event_query = f"""Find upcoming {category} events in {location} starting from {date_from}.
+        # Build detailed query - maximize event count
+        date_to_str = f" to {date_to}" if date_to and date_to != date_from else ""
+        event_query = f"""Find at least 15-20 upcoming {category} events in {location} from {date_from}{date_to_str}.
 
-{"Focus on unique local events, hidden gems, and lesser-known happenings rather than mainstream tourist attractions." if hidden_gems else "Include both popular and local events."}
+{"Focus on unique local events, hidden gems, and lesser-known happenings in addition to popular ones." if hidden_gems else "Include both popular and local events."}
 
-For each event you find, include:
-- Event name/title
-- Specific date (REQUIRED - skip events without dates)
-- Time if available
-- Venue name and location
-- Brief description
-- Source URL or ticket link
+For EACH event, include:
+- **Event name/title**
+- **Specific date** (REQUIRED - skip events without dates)
+- **Time** if available
+- **Venue name and location**
+- **Brief description** (1 sentence)
+- **Source URL or ticket link**
 
-Search event calendars, local venue websites, ticketing platforms (Eventbrite, etc.), and community listings.
+Search ALL of these: Eventbrite, Eventfrog, Ticketcorner, Songkick, local venue websites, community listings, and city event calendars.
 
-IMPORTANT: Only include events with confirmed dates. Quality over quantity - it's better to list 5 events with complete information than 20 with missing details."""
+List as many events as you can find (aim for 15-20+). Each event MUST have a confirmed date and a source URL."""
 
         logger.info(f"[PERPLEXITY] ========== SEARCH_EVENTS START ==========")
         logger.info(f"[PERPLEXITY] Category: {category}, Location: {location}")

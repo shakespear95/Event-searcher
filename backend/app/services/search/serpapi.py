@@ -248,14 +248,17 @@ class SerpAPISearch:
             logger.error(f"[SERPAPI] Step 1 ERROR: Google Search exception: {str(e)}")
             self.logger.log_result(action="google_search", success=False, error=str(e))
 
-        # Then try Google Events engine
+        # Then try Google Events engine (needs simpler query - no dates)
         try:
-            logger.info(f"[SERPAPI] Step 2: Google Events API with query: {event_query}")
+            # Google Events works best with simple queries like "events in Zurich"
+            google_events_query = f"events in {location}"
+            if category and category != "all":
+                google_events_query = f"{category} events in {location}"
+            logger.info(f"[SERPAPI] Step 2: Google Events API with query: {google_events_query}")
             params = {
                 "api_key": self.api_key,
-                "q": event_query,
+                "q": google_events_query,
                 "engine": "google_events",
-                "location": location,
             }
 
             response = await self.client.get(self.BASE_URL, params=params)

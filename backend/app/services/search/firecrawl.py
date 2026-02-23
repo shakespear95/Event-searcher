@@ -114,18 +114,27 @@ class FirecrawlSearch:
         date_from: str | None = None,
         category: str | None = None,
     ) -> FirecrawlResult:
-        """Specialized event search via Firecrawl."""
+        """Specialized event search via Firecrawl - targets individual event pages."""
         if category and hasattr(category, "value"):
             category = category.value
 
-        event_query = f"events in {location}"
-        if category and category != "all":
-            event_query = f"{category} events in {location}"
+        city = location.split(",")[0].strip()
+        cat_str = category if category and category != "all" else ""
+
+        # Parse month/year for natural language
+        month_str = ""
         if date_from:
-            event_query = f"{event_query} {date_from}"
+            try:
+                from dateutil import parser as dp
+                d = dp.parse(date_from)
+                month_str = d.strftime("%B %Y")
+            except Exception:
+                month_str = date_from
+
+        event_query = f"{cat_str} concerts events {city} {month_str} tickets venue".strip()
 
         logger.info(f"[FIRECRAWL] search_events query: {event_query}")
-        return await self.search(query=event_query, limit=10)
+        return await self.search(query=event_query, limit=15)
 
     async def health_check(self) -> bool:
         """Check if Firecrawl API is accessible."""

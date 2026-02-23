@@ -124,18 +124,28 @@ class SerperSearch:
         date_from: str | None = None,
         category: str | None = None,
     ) -> SerperResult:
-        """Specialized event search via SerperAPI."""
+        """Specialized event search via SerperAPI - targets individual event pages."""
         if category and hasattr(category, "value"):
             category = category.value
 
-        event_query = f"{location} events"
-        if category and category != "all":
-            event_query = f"{category} events {location}"
+        # Build query targeting individual event pages on ticketing sites
+        city = location.split(",")[0].strip()
+        cat_str = category if category and category != "all" else "events"
+
+        # Parse month/year from date for natural language
+        month_str = ""
         if date_from:
-            event_query = f"{event_query} {date_from}"
+            try:
+                from dateutil import parser as dp
+                d = dp.parse(date_from)
+                month_str = d.strftime("%B %Y")
+            except Exception:
+                month_str = date_from
+
+        event_query = f"{cat_str} {city} {month_str} tickets site:eventbrite.com OR site:eventfrog.ch OR site:ticketcorner.ch OR site:songkick.com"
 
         logger.info(f"[SERPER] search_events query: {event_query}")
-        return await self.search(query=event_query, location=location, num_results=10)
+        return await self.search(query=event_query, location=location, num_results=20)
 
     async def health_check(self) -> bool:
         """Check if SerperAPI is accessible."""

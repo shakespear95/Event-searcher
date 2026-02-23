@@ -55,13 +55,39 @@ class TicketmasterSearch:
         self.logger = ToolCallLogger("ticketmaster")
         self.client = httpx.AsyncClient(timeout=30.0)
 
+    # Country name -> Ticketmaster countryCode mapping
+    COUNTRY_CODES = {
+        "switzerland": "CH", "austria": "AT", "germany": "DE",
+        "france": "FR", "italy": "IT", "spain": "ES",
+        "united kingdom": "GB", "uk": "GB", "netherlands": "NL",
+        "belgium": "BE", "portugal": "PT", "czech republic": "CZ",
+        "poland": "PL", "sweden": "SE", "norway": "NO",
+        "denmark": "DK", "finland": "FI", "ireland": "IE",
+        "usa": "US", "united states": "US", "canada": "CA",
+        "australia": "AU", "liechtenstein": "CH",  # TM has no LI, use CH
+    }
+
+    def _extract_country_code(self, location: str) -> str | None:
+        """Extract Ticketmaster country code from location string."""
+        parts = [p.strip().lower() for p in location.split(",")]
+        for part in reversed(parts):
+            if part in self.COUNTRY_CODES:
+                return self.COUNTRY_CODES[part]
+        # Default to CH for Swiss cities
+        swiss_cities = ["zurich", "zürich", "bern", "basel", "geneva", "genève",
+                        "lausanne", "lucerne", "luzern", "vaduz", "winterthur"]
+        if parts[0] in swiss_cities:
+            return "CH"
+        return None
+
     async def search(
         self,
         keyword: str,
         city: str | None = None,
+        country_code: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        size: int = 20,
+        size: int = 50,
     ) -> TicketmasterResult:
         """Search Ticketmaster Discovery API."""
         self.logger.log_call(
@@ -69,6 +95,7 @@ class TicketmasterSearch:
             params={
                 "keyword": keyword[:100],
                 "city": city,
+                "country_code": country_code,
                 "start_date": start_date,
                 "size": size,
             },
@@ -82,6 +109,8 @@ class TicketmasterSearch:
         }
         if city:
             params["city"] = city
+        if country_code:
+            params["countryCode"] = country_code
         if start_date:
             params["startDateTime"] = f"{start_date}T00:00:00Z"
         if end_date:
@@ -184,22 +213,49 @@ class TicketmasterSearch:
         date_to: str | None = None,
         category: str | None = None,
     ) -> TicketmasterResult:
-        """Specialized event search."""
+        """Specialized event search with broad coverage."""
         if category and hasattr(category, "value"):
             category = category.value
 
-        # Extract city name from location string (e.g., "Zurich, Switzerland" -> "Zurich")
         city = location.split(",")[0].strip() if location else None
-        keyword = category if category and category != "all" else query
+        country_code = self._extract_country_code(location)
 
-        logger.info(f"[TICKETMASTER] search_events keyword: {keyword[:50]}, city: {city}")
-        return await self.search(
+        # First search: city + category keyword
+        keyword = category if category and category != "all" else ""
+        logger.info(f"[TICKETMASTER] search_events keyword='{keyword}', city={city}, country={country_code}")
+
+        # Search 1: City-level with category
+        result = await self.search(
             keyword=keyword,
             city=city,
+            country_code=country_code,
             start_date=date_from,
             end_date=date_to,
-            size=20,
+            size=50,
         )
+
+        # Search 2: If city search returned few results, broaden to country-level
+        if len(result.events) < 15 and country_code:
+            logger.info(f"[TICKETMASTER] City search returned only {len(result.events)}, broadening to country={country_code}")
+            broader = await self.search(
+                keyword=keyword,
+                city=None,
+                country_code=country_code,
+                start_date=date_from,
+                end_date=date_to,
+                size=50,
+            )
+            if broader.success:
+                # Merge, dedup by URL
+                seen_urls = {e.url for e in result.events}
+                for event in broader.events:
+                    if event.url not in seen_urls:
+                        result.events.append(event)
+                        seen_urls.add(event.url)
+                result.total_results = len(result.events)
+                logger.info(f"[TICKETMASTER] After broadening: {len(result.events)} total events")
+
+        return result
 
     async def health_check(self) -> bool:
         """Check if Ticketmaster API is accessible."""

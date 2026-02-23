@@ -454,20 +454,121 @@ class AgentOrchestrator:
                 error=str(e),
             )
 
+    def _convert_structured_events(
+        self,
+        merged_results: MergedSearchResults,
+        request: SearchRequest,
+    ) -> list[EventResult]:
+        """Directly convert structured events (Ticketmaster, Google Events) to EventResult.
+        These have full data and don't need Claude extraction."""
+        from app.schemas.event import EventLocation, EventTiming, EventPricing
+
+        direct_events: list[EventResult] = []
+
+        for result in merged_results.results:
+            # Only process results that have structured serpapi_data with a date
+            if not result.serpapi_data or not isinstance(result.serpapi_data, dict):
+                continue
+
+            data = result.serpapi_data
+            has_date = data.get("date") or data.get("localDate")
+            is_structured = "ticketmaster" in result.sources or "serpapi_events" in result.sources
+
+            if not (is_structured and has_date):
+                continue
+
+            # Parse date
+            date_str = data.get("date") or data.get("localDate", "")
+            time_str = data.get("time") or data.get("localTime", "")
+            try:
+                from dateutil import parser as dateparser
+                parsed_dt = dateparser.parse(date_str, fuzzy=True)
+                if time_str:
+                    try:
+                        parsed_time = dateparser.parse(time_str, fuzzy=True)
+                        parsed_dt = datetime.combine(parsed_dt.date(), parsed_time.time())
+                    except Exception:
+                        pass
+            except Exception:
+                parsed_dt = datetime.combine(request.date_from, datetime.min.time())
+
+            # Date range filter
+            event_date = parsed_dt.date() if isinstance(parsed_dt, datetime) else parsed_dt
+            if request.date_from and event_date < request.date_from:
+                continue
+            if request.date_to and event_date > request.date_to:
+                continue
+
+            # Category
+            category = self._map_category(data.get("category"), request.category)
+
+            # Pricing
+            is_free = False
+            price_min = data.get("price_min")
+            price_max = data.get("price_max")
+            price_info = None
+            if price_min is not None:
+                price_info = f"${price_min}"
+                if price_max and price_max != price_min:
+                    price_info += f" - ${price_max}"
+
+            # Source API
+            source_api = self._detect_source_api(result.url)
+
+            event = EventResult(
+                event_id=f"evt_{uuid.uuid4().hex[:8]}",
+                event_name=result.title or data.get("title", f"Event"),
+                description=data.get("description") or result.snippet or None,
+                category=category,
+                location=EventLocation(
+                    venue_name=data.get("venue_name"),
+                    address=data.get("venue_address"),
+                    city=data.get("venue_city") or request.location.split(",")[0].strip(),
+                    country=data.get("venue_country") or (request.location.split(",")[-1].strip() if "," in request.location else "Unknown"),
+                ),
+                timing=EventTiming(start_datetime=parsed_dt),
+                pricing=EventPricing(
+                    is_free=is_free,
+                    price_min=price_min,
+                    price_max=price_max,
+                    price_info=price_info,
+                ),
+                source=EventSource(
+                    source_url=result.url,
+                    source_api=source_api,
+                    verified=True,
+                ),
+                image_url=data.get("image_url"),
+                relevance_score=result.confidence_score,
+                is_hidden_gem=request.hidden_gems,
+            )
+            direct_events.append(event)
+            logger.info(f"[DIRECT] Converted: {event.event_name[:50]}... date={date_str} source={result.sources}")
+
+        logger.info(f"[DIRECT] Total structured events converted directly: {len(direct_events)}")
+        return direct_events
+
     async def _process_results(
         self,
         merged_results: MergedSearchResults,
         request: SearchRequest,
         state: GlobalState,
     ) -> list[EventResult]:
-        """Process raw results into structured EventResult objects using Claude."""
-        logger.info("========== CLAUDE PROCESSING START ==========")
+        """Process raw results into structured EventResult objects.
+        Structured data (Ticketmaster, Google Events) is converted directly.
+        Remaining results go through Claude extraction."""
+        logger.info("========== PROCESSING START ==========")
 
         if not merged_results.results:
-            logger.warning("[CLAUDE] No merged results to process")
+            logger.warning("No merged results to process")
             return []
 
-        logger.info(f"[CLAUDE] Processing {len(merged_results.results)} raw results")
+        # Step 1: Direct conversion of structured events (Ticketmaster, Google Events)
+        direct_events = self._convert_structured_events(merged_results, request)
+        direct_names = {e.event_name.lower() for e in direct_events}
+
+        logger.info(f"[PROCESSING] {len(direct_events)} events converted directly from structured data")
+        logger.info(f"[CLAUDE] Processing {len(merged_results.results)} raw results for additional extraction")
 
         # Get data for extraction
         perplexity_content = self.merger.get_perplexity_content(merged_results)
@@ -516,14 +617,17 @@ class AgentOrchestrator:
 
             if not extracted or not response.success:
                 logger.warning(f"[CLAUDE] Extraction failed: {response.error}")
-                # Fallback to basic processing
-                return self._fallback_process_results(merged_results, request, state)
+                # Fallback to basic processing + direct events
+                fallback = self._fallback_process_results(merged_results, request, state)
+                all_events = direct_events + [e for e in fallback if e.event_name.lower() not in direct_names]
+                return all_events[:request.results_count]
 
             logger.info(f"[CLAUDE] Extraction successful! Found {len(extracted.events)} events")
 
             # Convert ExtractedEvent to EventResult - filter out events without dates
-            events = []
+            claude_events = []
             skipped_no_date = 0
+            skipped_duplicate = 0
             for i, extracted_event in enumerate(extracted.events):
                 logger.info(f"[CLAUDE]   Event {i+1}: {extracted_event.name[:50] if extracted_event.name else 'No name'}...")
                 logger.info(f"[CLAUDE]     Date: {extracted_event.date}, Venue: {extracted_event.venue}")
@@ -535,12 +639,18 @@ class AgentOrchestrator:
                     skipped_no_date += 1
                     continue
 
+                # Skip if already in direct events
+                if extracted_event.name and extracted_event.name.lower() in direct_names:
+                    logger.info(f"[CLAUDE]     SKIPPED - already in direct events")
+                    skipped_duplicate += 1
+                    continue
+
                 try:
                     event = self._create_event_from_extracted(
                         extracted_event, request, source_urls, i
                     )
                     if event:
-                        events.append(event)
+                        claude_events.append(event)
                         state.log_tool_call(
                             tool_name="processor",
                             action="create_event",
@@ -553,15 +663,21 @@ class AgentOrchestrator:
 
             if skipped_no_date > 0:
                 logger.info(f"[CLAUDE] Skipped {skipped_no_date} events without valid dates")
+            if skipped_duplicate > 0:
+                logger.info(f"[CLAUDE] Skipped {skipped_duplicate} events already in direct results")
 
-            logger.info(f"========== CLAUDE PROCESSING COMPLETE ==========")
-            logger.info(f"[CLAUDE] Final event count: {len(events)}")
-            return events[:request.results_count]
+            # Merge direct + Claude-extracted events
+            all_events = direct_events + claude_events
+            logger.info(f"========== PROCESSING COMPLETE ==========")
+            logger.info(f"[PROCESSING] Direct events: {len(direct_events)}, Claude events: {len(claude_events)}, Total: {len(all_events)}")
+            return all_events[:request.results_count]
 
         except Exception as e:
             logger.error(f"Claude extraction error: {e}")
             state.add_error(f"Extraction failed: {e}")
-            return self._fallback_process_results(merged_results, request, state)
+            fallback = self._fallback_process_results(merged_results, request, state)
+            all_events = direct_events + [e for e in fallback if e.event_name.lower() not in direct_names]
+            return all_events[:request.results_count]
 
     def _parse_events_from_perplexity(self, content: str) -> list[dict[str, str]]:
         """Extract structured event data from Perplexity markdown content."""
