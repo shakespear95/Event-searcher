@@ -254,6 +254,137 @@ List as many events as you can find (aim for 15-20+). Each event MUST have a con
 
         return result
 
+    async def enrich_events(
+        self,
+        events_data: list[dict[str, str]],
+        location: str,
+        date_range: str,
+    ) -> list[dict[str, str]]:
+        """
+        Deep-research a batch of event URLs to extract full details.
+
+        Args:
+            events_data: list of {"url": ..., "title": ..., "snippet": ...}
+            location: search location for context
+            date_range: e.g. "2026-02-22 to 2026-03-01"
+
+        Returns:
+            list of enriched event dicts with date, time, venue, price, etc.
+        """
+        logger.info(f"[PERPLEXITY] ========== ENRICH START ({len(events_data)} events) ==========")
+
+        # Build the URL list for Perplexity to research
+        url_list = []
+        for i, ev in enumerate(events_data, 1):
+            title_hint = f' (title: "{ev.get("title", "")}")' if ev.get("title") else ""
+            snippet_hint = f' - {ev.get("snippet", "")[:80]}' if ev.get("snippet") else ""
+            url_list.append(f"{i}. {ev['url']}{title_hint}{snippet_hint}")
+
+        urls_text = "\n".join(url_list)
+
+        enrich_query = f"""I have {len(events_data)} event page URLs for events in/near {location} ({date_range}).
+For EACH URL below, research the page and extract the actual event details.
+
+URLs to research:
+{urls_text}
+
+For EACH event, respond in this EXACT format (one block per event):
+
+**Event name/title**: [name]
+**Specific date**: [e.g. February 27, 2026 — REQUIRED, skip if no date found]
+**Time**: [e.g. 19:00 or 7:30 PM]
+**Venue name**: [venue]
+**Address**: [street address, city]
+**Price**: [e.g. Free, CHF 45, $25-50]
+**Description**: [1-2 sentence description]
+**Source URL**: [the original URL from the list above]
+
+IMPORTANT:
+- Research EACH URL and extract real data — do NOT make up information
+- If a URL is a listing page (not a specific event), extract the FIRST upcoming event from that listing
+- Skip URLs that have no event data at all
+- Include the Source URL so I can match results back"""
+
+        try:
+            result = await self.search(query=enrich_query, location=location)
+
+            if not result.success or not result.content:
+                logger.warning(f"[PERPLEXITY] Enrich failed: {result.error}")
+                return []
+
+            logger.info(f"[PERPLEXITY] Enrich response: {len(result.content)} chars")
+
+            # Parse the structured response
+            enriched = self._parse_enrichment_response(result.content)
+            logger.info(f"[PERPLEXITY] Parsed {len(enriched)} enriched events")
+            for i, ev in enumerate(enriched):
+                logger.info(f"[PERPLEXITY]   Enriched {i+1}: {ev.get('name', '?')[:50]} | date={ev.get('date', '?')} | venue={ev.get('venue', '?')}")
+
+            logger.info(f"[PERPLEXITY] ========== ENRICH COMPLETE ==========")
+            return enriched
+
+        except Exception as e:
+            logger.error(f"[PERPLEXITY] Enrich error: {e}")
+            return []
+
+    def _parse_enrichment_response(self, content: str) -> list[dict[str, str]]:
+        """Parse the structured enrichment response from Perplexity."""
+        import re
+
+        events: list[dict[str, str]] = []
+        current: dict[str, str] = {}
+
+        field_map = {
+            "event name/title": "name",
+            "event name": "name",
+            "name": "name",
+            "specific date": "date",
+            "date": "date",
+            "time": "time",
+            "venue name": "venue",
+            "venue": "venue",
+            "address": "address",
+            "price": "price",
+            "description": "description",
+            "source url": "source_url",
+            "source": "source_url",
+            "url": "source_url",
+        }
+
+        for line in content.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Match **Field**: Value pattern
+            match = re.match(r'^\*\*([^*]+)\*\*\s*:\s*(.+)', line)
+            if match:
+                field_label = match.group(1).strip().lower()
+                value = match.group(2).strip()
+
+                # Map to our field names
+                field_key = None
+                for label, key in field_map.items():
+                    if field_label.startswith(label) or label.startswith(field_label):
+                        field_key = key
+                        break
+
+                if not field_key:
+                    continue
+
+                # If we hit a new "name" field and have a current event, save it
+                if field_key == "name" and current.get("name"):
+                    events.append(current)
+                    current = {}
+
+                current[field_key] = value
+
+        # Don't forget the last event
+        if current.get("name"):
+            events.append(current)
+
+        return events
+
     async def verify_event(self, event_name: str, event_url: str) -> bool:
         """
         Verify an event exists by checking its source URL.

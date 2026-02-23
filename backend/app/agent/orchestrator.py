@@ -691,71 +691,160 @@ class AgentOrchestrator:
         request: SearchRequest,
         state: GlobalState,
     ) -> list[EventResult]:
-        """Convert ALL merged results directly to events.
-        Claude is used only to enrich events that are missing names/details."""
+        """Process merged results:
+        1. Convert all to basic EventResult (no drop)
+        2. Use Perplexity to deep-research and enrich with date/venue/price
+        3. Return up to 30 enriched results"""
+        from app.schemas.event import EventLocation, EventTiming, EventPricing
+
         logger.info("========== PROCESSING START ==========")
 
         if not merged_results.results:
             logger.warning("No merged results to process")
             return []
 
-        # Step 1: Convert ALL merged results directly to EventResult
-        all_events = self._convert_all_merged_results(merged_results, request)
-        logger.info(f"[PROCESSING] Converted {len(all_events)} events directly (0% drop)")
+        # Cap at 30 results for enrichment
+        max_to_process = min(30, request.results_count, len(merged_results.results))
+        results_to_process = merged_results.results[:max_to_process]
+        logger.info(f"[PROCESSING] Processing top {len(results_to_process)} merged results")
 
-        # Step 2: Use Claude to fill in blanks on events missing good names
-        events_needing_enrichment = [
-            e for e in all_events
-            if not e.event_name or e.event_name.startswith("Event in ")
-        ]
-
-        if events_needing_enrichment:
-            logger.info(f"[CLAUDE] {len(events_needing_enrichment)} events need name enrichment")
-            try:
-                await self._enrich_event_names(events_needing_enrichment, request, state)
-            except Exception as e:
-                logger.warning(f"[CLAUDE] Enrichment failed (non-fatal): {e}")
-
-        logger.info(f"========== PROCESSING COMPLETE ==========")
-        logger.info(f"[PROCESSING] Final event count: {len(all_events)}")
-        return all_events[:request.results_count]
-
-    async def _enrich_event_names(
-        self,
-        events: list[EventResult],
-        request: SearchRequest,
-        state: GlobalState,
-    ) -> None:
-        """Use Claude to fill in missing event names from their source URLs."""
-        urls_info = "\n".join(
-            f"- {e.source.source_url} (current name: {e.event_name})"
-            for e in events[:20]  # Cap at 20 to keep prompt small
+        # Step 1: Convert all to basic EventResult
+        all_events = self._convert_all_merged_results(
+            MergedSearchResults(
+                results=results_to_process,
+                sources_used=merged_results.sources_used,
+                total_raw_results=merged_results.total_raw_results,
+                total_after_dedup=len(results_to_process),
+            ),
+            request,
         )
 
-        prompt = f"""Given these event page URLs for events in {request.location}, suggest better event names based on the URL patterns.
-Return a JSON array of objects with "url" and "name" fields.
+        # Step 2: Identify events needing enrichment (missing date or venue)
+        events_needing_enrichment = []
+        events_complete = []
+        for event in all_events:
+            has_real_date = True
+            # Check if date is just the default (request.date_from)
+            if event.timing.start_datetime:
+                event_date = event.timing.start_datetime
+                if isinstance(event_date, datetime):
+                    event_date = event_date.date()
+                if event_date == request.date_from and event_date == event.timing.start_datetime.date() if isinstance(event.timing.start_datetime, datetime) else True:
+                    # Could be default — check if we actually parsed a date
+                    has_real_date = bool(event.location.venue_name)  # proxy: if no venue either, likely no data
 
-URLs:
-{urls_info}
+            if not has_real_date or not event.location.venue_name:
+                events_needing_enrichment.append(event)
+            else:
+                events_complete.append(event)
 
-Return valid JSON only: [{{"url": "...", "name": "..."}}]"""
+        logger.info(f"[PROCESSING] Complete events: {len(events_complete)}, Need enrichment: {len(events_needing_enrichment)}")
 
-        try:
-            result = await self.claude.generate(prompt=prompt, max_tokens=2000)
-            if result and result.content:
-                import json
-                import re
-                # Extract JSON from response
-                json_match = re.search(r'\[.*\]', result.content, re.DOTALL)
-                if json_match:
-                    names = json.loads(json_match.group())
-                    url_to_name = {item["url"]: item["name"] for item in names if "url" in item and "name" in item}
-                    for event in events:
-                        if event.source.source_url in url_to_name:
-                            event.event_name = url_to_name[event.source.source_url]
-                            logger.info(f"[CLAUDE] Enriched name: {event.event_name[:50]}...")
-        except Exception as e:
-            logger.warning(f"[CLAUDE] Name enrichment failed: {e}")
+        # Step 3: Use Perplexity to deep-research events missing data
+        if events_needing_enrichment:
+            date_range = f"{request.date_from} to {request.date_to}" if request.date_to else str(request.date_from)
+
+            # Batch enrichment — 15 per Perplexity call max
+            batch_size = 15
+            for batch_start in range(0, len(events_needing_enrichment), batch_size):
+                batch = events_needing_enrichment[batch_start:batch_start + batch_size]
+                batch_data = [
+                    {
+                        "url": e.source.source_url,
+                        "title": e.event_name,
+                        "snippet": e.description or "",
+                    }
+                    for e in batch
+                ]
+
+                logger.info(f"[PERPLEXITY ENRICH] Sending batch of {len(batch)} events for deep research")
+                try:
+                    enriched_list = await self.perplexity.enrich_events(
+                        events_data=batch_data,
+                        location=request.location,
+                        date_range=date_range,
+                    )
+
+                    # Match enriched data back to events by URL
+                    url_to_enriched = {}
+                    for enriched in enriched_list:
+                        src_url = enriched.get("source_url", "")
+                        if src_url:
+                            url_to_enriched[src_url] = enriched
+
+                    enriched_count = 0
+                    for event in batch:
+                        enriched = url_to_enriched.get(event.source.source_url)
+                        if not enriched:
+                            # Try partial URL match
+                            for url_key, enr_data in url_to_enriched.items():
+                                if url_key in event.source.source_url or event.source.source_url in url_key:
+                                    enriched = enr_data
+                                    break
+
+                        if enriched:
+                            enriched_count += 1
+                            # Update event name
+                            if enriched.get("name") and event.event_name.startswith("Event in "):
+                                event.event_name = enriched["name"]
+
+                            # Update date
+                            if enriched.get("date"):
+                                try:
+                                    from dateutil import parser as dateparser
+                                    parsed = dateparser.parse(enriched["date"], fuzzy=True)
+                                    if enriched.get("time"):
+                                        try:
+                                            parsed_time = dateparser.parse(enriched["time"], fuzzy=True)
+                                            parsed = datetime.combine(parsed.date(), parsed_time.time())
+                                        except Exception:
+                                            pass
+                                    event.timing = EventTiming(start_datetime=parsed)
+                                except Exception:
+                                    pass
+
+                            # Update venue
+                            if enriched.get("venue"):
+                                event.location.venue_name = enriched["venue"]
+                            if enriched.get("address"):
+                                event.location.address = enriched["address"]
+
+                            # Update price
+                            if enriched.get("price"):
+                                price_str = enriched["price"]
+                                event.pricing.price_info = price_str
+                                event.pricing.is_free = "free" in price_str.lower()
+
+                            # Update description
+                            if enriched.get("description") and not event.description:
+                                event.description = enriched["description"]
+
+                            logger.info(f"[ENRICH] Updated: {event.event_name[:40]}... date={enriched.get('date', '?')} venue={enriched.get('venue', '?')}")
+
+                    logger.info(f"[PERPLEXITY ENRICH] Batch result: {enriched_count}/{len(batch)} events enriched")
+
+                    state.log_tool_call(
+                        tool_name="perplexity",
+                        action="enrich_events",
+                        success=True,
+                        result_summary=f"Enriched {enriched_count}/{len(batch)} events",
+                    )
+
+                except Exception as e:
+                    logger.error(f"[PERPLEXITY ENRICH] Batch failed (non-fatal): {e}")
+                    state.log_tool_call(
+                        tool_name="perplexity",
+                        action="enrich_events",
+                        success=False,
+                        error=str(e),
+                    )
+
+        # Combine complete + enriched events
+        final_events = events_complete + events_needing_enrichment
+
+        logger.info(f"========== PROCESSING COMPLETE ==========")
+        logger.info(f"[PROCESSING] Final event count: {len(final_events)}")
+        return final_events[:request.results_count]
 
     def _parse_events_from_perplexity(self, content: str) -> list[dict[str, str]]:
         """Extract structured event data from Perplexity markdown content."""
