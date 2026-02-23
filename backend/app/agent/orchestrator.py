@@ -165,12 +165,27 @@ class AgentOrchestrator:
                 weather_checked=state.weather_state.checked,
             )
 
-            logger.info(
-                "Search completed",
-                request_id=request_id,
-                results=len(events),
-                duration_ms=state.total_duration_ms,
-            )
+            # === PIPELINE SUMMARY ===
+            logger.info("=" * 60)
+            logger.info("SEARCH PIPELINE SUMMARY")
+            logger.info("=" * 60)
+            logger.info(f"  Request ID:         {request_id}")
+            logger.info(f"  Query:              {request.query}")
+            logger.info(f"  Location:           {request.location}")
+            logger.info(f"  Category:           {request.category}")
+            logger.info(f"  Date range:         {request.date_from} -> {request.date_to}")
+            logger.info(f"  Requested count:    {request.results_count}")
+            logger.info(f"  ---")
+            logger.info(f"  Sources used:       {merged_results.sources_used}")
+            logger.info(f"  Raw results:        {merged_results.total_raw_results}")
+            logger.info(f"  After dedup:        {merged_results.total_after_dedup}")
+            logger.info(f"  After processing:   {len(events)}")
+            logger.info(f"  Final returned:     {len(events)}")
+            logger.info(f"  Duration:           {state.total_duration_ms}ms")
+            if merged_results.total_raw_results > 0 and len(events) < merged_results.total_raw_results:
+                drop_pct = round((1 - len(events) / merged_results.total_raw_results) * 100, 1)
+                logger.info(f"  DROP RATE:          {drop_pct}% of raw results lost in pipeline")
+            logger.info("=" * 60)
 
             return SearchResponse(
                 request=request,
@@ -309,6 +324,43 @@ class AgentOrchestrator:
                 providers[name] = None
             else:
                 providers[name] = result
+
+        # === DIAGNOSTIC: Per-provider result counts ===
+        logger.info("=" * 60)
+        logger.info("PROVIDER RESULTS SUMMARY")
+        logger.info("=" * 60)
+
+        for name, result in providers.items():
+            if result is None:
+                logger.info(f"  [{name.upper()}] FAILED (returned None / exception)")
+                continue
+
+            success = hasattr(result, 'success') and result.success
+
+            if name == "perplexity":
+                src_count = len(result.sources) if hasattr(result, 'sources') else 0
+                content_len = len(result.content) if hasattr(result, 'content') and result.content else 0
+                logger.info(f"  [PERPLEXITY] success={success} | sources={src_count} | content_length={content_len} chars")
+            elif name == "serpapi":
+                organic = len(result.results) if hasattr(result, 'results') else 0
+                events = len(result.events) if hasattr(result, 'events') else 0
+                logger.info(f"  [SERPAPI] success={success} | organic_results={organic} | google_events={events}")
+            elif name == "serper":
+                count = len(result.results) if hasattr(result, 'results') else 0
+                logger.info(f"  [SERPER] success={success} | results={count}")
+            elif name == "firecrawl":
+                count = len(result.results) if hasattr(result, 'results') else 0
+                logger.info(f"  [FIRECRAWL] success={success} | results={count}")
+            elif name == "exa":
+                count = len(result.results) if hasattr(result, 'results') else 0
+                logger.info(f"  [EXA] success={success} | results={count}")
+            elif name == "ticketmaster":
+                count = len(result.events) if hasattr(result, 'events') else 0
+                logger.info(f"  [TICKETMASTER] success={success} | events={count}")
+            else:
+                logger.info(f"  [{name.upper()}] success={success}")
+
+        logger.info("=" * 60)
 
         # Log tool calls for all providers
         for name, result in providers.items():

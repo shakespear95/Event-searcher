@@ -196,6 +196,17 @@ class SearchMerger:
         ticketmaster_result: TicketmasterResult | None = None,
         max_results: int = 50,
     ) -> MergedSearchResults:
+        logger.info("=" * 60)
+        logger.info("MERGER INPUT DIAGNOSTIC")
+        logger.info("=" * 60)
+        logger.info(f"  max_results cap: {max_results}")
+        logger.info(f"  perplexity: present={perplexity_result is not None}, success={perplexity_result.success if perplexity_result else 'N/A'}, sources={len(perplexity_result.sources) if perplexity_result and perplexity_result.success else 0}")
+        logger.info(f"  serpapi:    present={serpapi_result is not None}, success={serpapi_result.success if serpapi_result else 'N/A'}, organic={len(serpapi_result.results) if serpapi_result and serpapi_result.success else 0}, events={len(serpapi_result.events) if serpapi_result and serpapi_result.success else 0}")
+        logger.info(f"  serper:     present={serper_result is not None}, success={serper_result.success if serper_result else 'N/A'}, results={len(serper_result.results) if serper_result and serper_result.success else 0}")
+        logger.info(f"  firecrawl:  present={firecrawl_result is not None}, success={firecrawl_result.success if firecrawl_result else 'N/A'}, results={len(firecrawl_result.results) if firecrawl_result and firecrawl_result.success else 0}")
+        logger.info(f"  exa:        present={exa_result is not None}, success={exa_result.success if exa_result else 'N/A'}, results={len(exa_result.results) if exa_result and exa_result.success else 0}")
+        logger.info(f"  ticketmaster: present={ticketmaster_result is not None}, success={ticketmaster_result.success if ticketmaster_result else 'N/A'}, events={len(ticketmaster_result.events) if ticketmaster_result and ticketmaster_result.success else 0}")
+        logger.info("=" * 60)
         """
         Merge results from all search sources.
 
@@ -249,6 +260,8 @@ class SearchMerger:
                 logger.info(f"[MERGER]   Parsed event {i+1}: {pe.get('name', 'unnamed')[:60]}")
 
         # === Process Perplexity sources first ===
+        perplexity_added = 0
+        perplexity_duped = 0
         if perplexity_result and perplexity_result.success:
             for idx, source_url in enumerate(perplexity_result.sources):
                 if not self._is_duplicate(source_url, ""):
@@ -277,10 +290,20 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(source_url, title)
+                    perplexity_added += 1
+                else:
+                    perplexity_duped += 1
+                    logger.info(f"[MERGER] DEDUP perplexity source #{idx}: {source_url[:80]}")
 
             merged.total_raw_results += len(perplexity_result.sources)
+            logger.info(f"[MERGER] Perplexity: {perplexity_added} added, {perplexity_duped} deduped (from {len(perplexity_result.sources)} sources)")
 
         # === Process SerpAPI results ===
+        serpapi_added = 0
+        serpapi_enriched = 0
+        serpapi_duped = 0
+        serpapi_events_added = 0
+        serpapi_events_duped = 0
         if serpapi_result and serpapi_result.success:
             for item in serpapi_result.results:
                 if not item.link:
@@ -297,6 +320,7 @@ class SearchMerger:
                         "date": item.date,
                     }
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                    serpapi_enriched += 1
                 elif not self._is_duplicate(item.link, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -312,6 +336,10 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(item.link, item.title)
+                    serpapi_added += 1
+                else:
+                    serpapi_duped += 1
+                    logger.info(f"[MERGER] DEDUP serpapi organic: {item.title[:50]}... -> {item.link[:60]}")
 
             merged.total_raw_results += len(serpapi_result.results)
 
@@ -331,8 +359,19 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(event_url, event_title)
+                    serpapi_events_added += 1
+                else:
+                    serpapi_events_duped += 1
+                    if event_url:
+                        logger.info(f"[MERGER] DEDUP serpapi event: {event_title[:50]}...")
+
+            logger.info(f"[MERGER] SerpAPI organic: {serpapi_added} added, {serpapi_enriched} enriched existing, {serpapi_duped} deduped (from {len(serpapi_result.results)} results)")
+            logger.info(f"[MERGER] SerpAPI events: {serpapi_events_added} added, {serpapi_events_duped} deduped (from {len(serpapi_result.events)} events)")
 
         # === Process Serper results ===
+        serper_added = 0
+        serper_enriched = 0
+        serper_duped = 0
         if serper_result and serper_result.success:
             for item in serper_result.results:
                 if not item.link:
@@ -342,6 +381,7 @@ class SearchMerger:
                 if existing:
                     existing.sources.append("serper")
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                    serper_enriched += 1
                 elif not self._is_duplicate(item.link, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -352,10 +392,18 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(item.link, item.title)
+                    serper_added += 1
+                else:
+                    serper_duped += 1
+                    logger.info(f"[MERGER] DEDUP serper: {item.title[:50]}... -> {item.link[:60]}")
 
             merged.total_raw_results += len(serper_result.results)
+            logger.info(f"[MERGER] Serper: {serper_added} added, {serper_enriched} enriched, {serper_duped} deduped (from {len(serper_result.results)} results)")
 
         # === Process Firecrawl results ===
+        firecrawl_added = 0
+        firecrawl_enriched = 0
+        firecrawl_duped = 0
         if firecrawl_result and firecrawl_result.success:
             for item in firecrawl_result.results:
                 if not item.url:
@@ -368,6 +416,7 @@ class SearchMerger:
                     # Enrich with Firecrawl's markdown content if richer
                     if item.content and len(item.content) > len(existing.snippet or ""):
                         existing.snippet = item.content[:500]
+                    firecrawl_enriched += 1
                 elif not self._is_duplicate(item.url, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -378,10 +427,18 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(item.url, item.title)
+                    firecrawl_added += 1
+                else:
+                    firecrawl_duped += 1
+                    logger.info(f"[MERGER] DEDUP firecrawl: {item.title[:50]}... -> {item.url[:60]}")
 
             merged.total_raw_results += len(firecrawl_result.results)
+            logger.info(f"[MERGER] Firecrawl: {firecrawl_added} added, {firecrawl_enriched} enriched, {firecrawl_duped} deduped (from {len(firecrawl_result.results)} results)")
 
         # === Process Exa results ===
+        exa_added = 0
+        exa_enriched = 0
+        exa_duped = 0
         if exa_result and exa_result.success:
             for item in exa_result.results:
                 if not item.url:
@@ -391,6 +448,7 @@ class SearchMerger:
                 if existing:
                     existing.sources.append("exa")
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
+                    exa_enriched += 1
                 elif not self._is_duplicate(item.url, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -401,10 +459,18 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(item.url, item.title)
+                    exa_added += 1
+                else:
+                    exa_duped += 1
+                    logger.info(f"[MERGER] DEDUP exa: {item.title[:50]}... -> {item.url[:60]}")
 
             merged.total_raw_results += len(exa_result.results)
+            logger.info(f"[MERGER] Exa: {exa_added} added, {exa_enriched} enriched, {exa_duped} deduped (from {len(exa_result.results)} results)")
 
         # === Process Ticketmaster results (highest confidence -- structured event data) ===
+        tm_added = 0
+        tm_enriched = 0
+        tm_duped = 0
         if ticketmaster_result and ticketmaster_result.success:
             for event in ticketmaster_result.events:
                 if not event.url:
@@ -414,6 +480,7 @@ class SearchMerger:
                 if existing:
                     existing.sources.append("ticketmaster")
                     existing.confidence_score = max(existing.confidence_score, 0.85)
+                    tm_enriched += 1
                 elif not self._is_duplicate(event.url, event.name):
                     # Build rich snippet from structured Ticketmaster data
                     snippet_parts = []
@@ -450,22 +517,37 @@ class SearchMerger:
                     )
                     results.append(result)
                     self._mark_seen(event.url, event.name)
+                    tm_added += 1
+                else:
+                    tm_duped += 1
+                    logger.info(f"[MERGER] DEDUP ticketmaster: {event.name[:50]}...")
 
             merged.total_raw_results += len(ticketmaster_result.events)
+            logger.info(f"[MERGER] Ticketmaster: {tm_added} added, {tm_enriched} enriched, {tm_duped} deduped (from {len(ticketmaster_result.events)} events)")
 
         # Sort by confidence score
         results.sort(key=lambda x: x.confidence_score, reverse=True)
+
+        total_before_cap = len(results)
 
         # Limit results
         merged.results = results[:max_results]
         merged.total_after_dedup = len(merged.results)
 
-        logger.info(
-            "Merged search results",
-            raw_total=merged.total_raw_results,
-            after_dedup=merged.total_after_dedup,
-            sources=merged.sources_used,
-        )
+        logger.info("=" * 60)
+        logger.info("MERGER OUTPUT SUMMARY")
+        logger.info("=" * 60)
+        logger.info(f"  Total raw inputs:     {merged.total_raw_results}")
+        logger.info(f"  After dedup:          {total_before_cap}")
+        if total_before_cap > max_results:
+            logger.info(f"  After max_results cap ({max_results}): {len(merged.results)}  ** {total_before_cap - max_results} results DROPPED by cap **")
+        else:
+            logger.info(f"  After max_results cap ({max_results}): {len(merged.results)}")
+        logger.info(f"  Sources used:         {merged.sources_used}")
+        # Log all final results with their sources
+        for i, r in enumerate(merged.results):
+            logger.info(f"  [{i+1}] score={r.confidence_score:.2f} sources={r.sources} title={r.title[:50] if r.title else '(no title)'}...")
+        logger.info("=" * 60)
 
         return merged
 
