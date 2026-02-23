@@ -54,6 +54,9 @@ interface EventDetailModalProps {
       value?: string
       label?: string
     }
+    performers?: string[]
+    genre?: string
+    availabilityStatus?: string
   }
   isOpen: boolean
   onClose: () => void
@@ -230,9 +233,14 @@ export function EventDetailModal({
           </div>
 
           <div className="absolute bottom-4 sm:bottom-6 left-4 sm:left-6 right-4 sm:right-6">
-            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white mb-2 leading-tight">
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-white mb-1 leading-tight">
               {event.title}
             </h1>
+            {event.performers && event.performers.length > 0 && (
+              <p className="text-sm text-white/80 mb-2">
+                {event.performers.join(', ')}
+              </p>
+            )}
             <div className="flex items-center gap-3 sm:gap-4 text-white/90 flex-wrap">
               <div className="flex items-center gap-1">
                 <MapPin className="w-4 h-4" />
@@ -245,6 +253,25 @@ export function EventDetailModal({
                     {formatTime(event.time)} {t('event.oclock')}
                   </span>
                 </div>
+              )}
+              {event.genre && (
+                <Badge variant="secondary" className="text-xs bg-white/20 text-white border-0">
+                  {event.genre}
+                </Badge>
+              )}
+              {event.availabilityStatus && (
+                <Badge
+                  variant="secondary"
+                  className={`text-xs border-0 ${
+                    event.availabilityStatus === 'onsale'
+                      ? 'bg-green-500/80 text-white'
+                      : event.availabilityStatus === 'offsale'
+                        ? 'bg-red-500/80 text-white'
+                        : 'bg-white/20 text-white'
+                  }`}
+                >
+                  {event.availabilityStatus === 'onsale' ? 'On Sale' : event.availabilityStatus === 'offsale' ? 'Off Sale' : event.availabilityStatus === 'cancelled' ? 'Cancelled' : event.availabilityStatus}
+                </Badge>
               )}
             </div>
           </div>

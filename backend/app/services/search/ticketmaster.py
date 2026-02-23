@@ -32,6 +32,16 @@ class TicketmasterEvent:
     category: str | None = None
     source: str = "ticketmaster"
     raw_data: dict[str, Any] | None = None
+    # Rich metadata
+    performers: list[str] = field(default_factory=list)
+    genre: str | None = None
+    subgenre: str | None = None
+    timezone: str | None = None
+    on_sale_status: str | None = None
+    please_note: str | None = None
+    promoter: str | None = None
+    all_images: list[dict[str, Any]] = field(default_factory=list)
+    accessibility_info: str | None = None
 
 
 @dataclass
@@ -147,11 +157,33 @@ class TicketmasterSearch:
 
                 # Extract classification/category
                 classifications = item.get("classifications", [])
-                cat = (
-                    classifications[0].get("segment", {}).get("name", "")
-                    if classifications
-                    else ""
-                )
+                classification = classifications[0] if classifications else {}
+                cat = classification.get("segment", {}).get("name", "")
+                genre_name = classification.get("genre", {}).get("name")
+                subgenre_name = classification.get("subGenre", {}).get("name")
+                # Filter out "Undefined" values from TM API
+                if genre_name == "Undefined":
+                    genre_name = None
+                if subgenre_name == "Undefined":
+                    subgenre_name = None
+
+                # Extract performers from _embedded.attractions
+                attractions = item.get("_embedded", {}).get("attractions", [])
+                performers = [a.get("name", "") for a in attractions if a.get("name")]
+
+                # Extract timezone and sale status
+                timezone = item.get("dates", {}).get("timezone")
+                on_sale_status = item.get("dates", {}).get("status", {}).get("code")
+
+                # Extract promoter, pleaseNote, accessibility
+                promoter_info = item.get("promoter", {})
+                promoter_name = promoter_info.get("name") if promoter_info else None
+                please_note = item.get("pleaseNote")
+                accessibility_data = item.get("accessibility", {})
+                accessibility_info = accessibility_data.get("info") if accessibility_data else None
+
+                # All images (not just highest-res)
+                all_images = [{"url": img.get("url"), "width": img.get("width", 0), "height": img.get("height", 0), "ratio": img.get("ratio", "")} for img in images if img.get("url")]
 
                 event = TicketmasterEvent(
                     name=item.get("name", ""),
@@ -168,11 +200,21 @@ class TicketmasterSearch:
                     image_url=image_url,
                     category=cat,
                     raw_data=item,
+                    performers=performers,
+                    genre=genre_name,
+                    subgenre=subgenre_name,
+                    timezone=timezone,
+                    on_sale_status=on_sale_status,
+                    please_note=please_note,
+                    promoter=promoter_name,
+                    all_images=all_images,
+                    accessibility_info=accessibility_info,
                 )
                 events.append(event)
                 logger.info(
                     f"[TICKETMASTER]   Event: {event.name[:50]}... "
-                    f"date: {event.date}, venue: {event.venue_name}"
+                    f"date: {event.date}, venue: {event.venue_name}, "
+                    f"performers: {event.performers[:3]}, genre: {event.genre}, status: {event.on_sale_status}"
                 )
                 if event.url:
                     self.logger.log_source(

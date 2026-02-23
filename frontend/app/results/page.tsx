@@ -154,6 +154,29 @@ function ResultsContent() {
     const startDate = new Date(event.timing.start_datetime)
     const timeStr = startDate.toTimeString().slice(0, 5)
 
+    // Build display price string
+    const currency = event.pricing.price_currency || 'USD'
+    const currencySymbol = currency === 'EUR' ? '\u20AC' : currency === 'CHF' ? 'CHF ' : currency === 'GBP' ? '\u00A3' : '$'
+    let priceDisplay: string | undefined
+    let priceRangeDisplay: string | undefined
+    if (event.pricing.is_free) {
+      priceDisplay = t('event.free')
+    } else if (event.pricing.price_info) {
+      priceDisplay = event.pricing.price_info
+    } else if (event.pricing.price_min != null) {
+      priceDisplay = `${currencySymbol}${event.pricing.price_min}`
+      if (event.pricing.price_max && event.pricing.price_max !== event.pricing.price_min) {
+        priceDisplay += ` - ${currencySymbol}${event.pricing.price_max}`
+        priceRangeDisplay = priceDisplay
+      }
+    } else if (event.pricing.price) {
+      priceDisplay = `${currencySymbol}${event.pricing.price}`
+    }
+
+    // Booking URL: prefer pricing.booking_url, fall back to source URL for ticketmaster
+    const bookingUrl = event.pricing.booking_url
+      || (event.source.source_api === 'ticketmaster' ? event.source.source_url : undefined)
+
     return {
       id: event.event_id,
       title: event.event_name,
@@ -166,22 +189,25 @@ function ResultsContent() {
       image: event.image_url || getCategoryImage(event.category, event.event_name),
       category: event.category,
       description: event.description,
-      price: event.pricing.is_free
-        ? t('event.free')
-        : event.pricing.price
-          ? `$${event.pricing.price}`
-          : event.pricing.price_range,
+      price: priceDisplay,
       specialFeature: event.is_hidden_gem ? 'Hidden Gem' : undefined,
       source: event.source.source_api,
       latitude: event.location.coordinates?.[0],
       longitude: event.location.coordinates?.[1],
       tickets: event.pricing.is_free
         ? { type: 'free' }
-        : event.pricing.booking_url
-          ? { type: 'link', value: event.pricing.booking_url, label: 'Book Now' }
+        : bookingUrl
+          ? { type: 'link', value: bookingUrl, label: 'Get Tickets' }
           : undefined,
       isFavorite: favorites.has(event.event_id),
       onToggleFavorite: () => toggleFavorite(event.event_id),
+      // Rich metadata
+      performers: event.performers,
+      genre: event.genre,
+      priceRange: priceRangeDisplay,
+      bookingUrl: bookingUrl,
+      availabilityStatus: event.availability_status,
+      images: event.images,
     }
   }
 

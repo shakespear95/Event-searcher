@@ -515,23 +515,41 @@ class AgentOrchestrator:
             # Source API
             source_api = self._detect_source_api(result.url)
 
+            # Build tags from classifications
+            tags = [t for t in [data.get("genre"), data.get("subgenre"), data.get("category")] if t]
+
+            # Images
+            all_images_raw = data.get("all_images", [])
+            image_urls = [img["url"] for img in all_images_raw if img.get("url")]
+
             event = EventResult(
                 event_id=f"evt_{uuid.uuid4().hex[:8]}",
                 event_name=result.title or data.get("title", f"Event"),
                 description=data.get("description") or result.snippet or None,
                 category=category,
+                subcategory=data.get("subgenre") or data.get("genre"),
+                tags=tags,
+                genre=data.get("genre"),
+                performers=data.get("performers", []),
+                organizer=data.get("promoter"),
+                availability_status=data.get("on_sale_status"),
                 location=EventLocation(
                     venue_name=data.get("venue_name"),
                     address=data.get("venue_address"),
                     city=data.get("venue_city") or request.location.split(",")[0].strip(),
                     country=data.get("venue_country") or (request.location.split(",")[-1].strip() if "," in request.location else "Unknown"),
                 ),
-                timing=EventTiming(start_datetime=parsed_dt),
+                timing=EventTiming(
+                    start_datetime=parsed_dt,
+                    timezone=data.get("timezone") or "UTC",
+                ),
                 pricing=EventPricing(
                     is_free=is_free,
                     price_min=price_min,
                     price_max=price_max,
+                    price_currency=data.get("price_currency") or "USD",
                     price_info=price_info,
+                    booking_url=result.url,
                 ),
                 source=EventSource(
                     source_url=result.url,
@@ -539,11 +557,14 @@ class AgentOrchestrator:
                     verified=True,
                 ),
                 image_url=data.get("image_url"),
+                images=image_urls,
+                age_restriction=self._parse_age_restriction(data.get("please_note", "")),
+                accessibility=bool(data.get("accessibility_info")),
                 relevance_score=result.confidence_score,
                 is_hidden_gem=request.hidden_gems,
             )
             direct_events.append(event)
-            logger.info(f"[DIRECT] Converted: {event.event_name[:50]}... date={date_str} source={result.sources}")
+            logger.info(f"[DIRECT] Converted: {event.event_name[:50]}... date={date_str} performers={event.performers[:2]} genre={event.genre} source={result.sources}")
 
         logger.info(f"[DIRECT] Total structured events converted directly: {len(direct_events)}")
         return direct_events
@@ -653,23 +674,41 @@ class AgentOrchestrator:
             # --- Event name ---
             event_name = result.title or data.get("title") or f"Event in {city}"
 
+            # Build tags from classifications
+            tags = [t for t in [data.get("genre"), data.get("subgenre"), data.get("category")] if t]
+
+            # Images
+            all_images_raw = data.get("all_images", [])
+            image_urls = [img["url"] for img in all_images_raw if isinstance(img, dict) and img.get("url")]
+
             event = EventResult(
                 event_id=f"evt_{uuid.uuid4().hex[:8]}",
                 event_name=event_name,
                 description=data.get("description") or result.snippet or None,
                 category=category,
+                subcategory=data.get("subgenre") or data.get("genre"),
+                tags=tags,
+                genre=data.get("genre"),
+                performers=data.get("performers", []),
+                organizer=data.get("promoter"),
+                availability_status=data.get("on_sale_status"),
                 location=EventLocation(
                     venue_name=venue_name,
                     address=data.get("venue_address"),
                     city=data.get("venue_city") or city,
                     country=data.get("venue_country") or country,
                 ),
-                timing=EventTiming(start_datetime=parsed_dt),
+                timing=EventTiming(
+                    start_datetime=parsed_dt,
+                    timezone=data.get("timezone") or "UTC",
+                ),
                 pricing=EventPricing(
                     is_free=is_free,
                     price_min=price_min,
                     price_max=price_max,
+                    price_currency=data.get("price_currency") or "USD",
                     price_info=price_info,
+                    booking_url=result.url if "ticketmaster" in result.sources else None,
                 ),
                 source=EventSource(
                     source_url=result.url,
@@ -677,6 +716,9 @@ class AgentOrchestrator:
                     verified=True,
                 ),
                 image_url=data.get("image_url"),
+                images=image_urls,
+                age_restriction=self._parse_age_restriction(data.get("please_note", "")),
+                accessibility=bool(data.get("accessibility_info")),
                 relevance_score=result.confidence_score,
                 is_hidden_gem=request.hidden_gems,
             )
@@ -799,9 +841,23 @@ class AgentOrchestrator:
                                             parsed = datetime.combine(parsed.date(), parsed_time.time())
                                         except Exception:
                                             pass
-                                    event.timing = EventTiming(start_datetime=parsed)
+                                    tz = enriched.get("timezone") or event.timing.timezone
+                                    event.timing = EventTiming(start_datetime=parsed, timezone=tz)
                                 except Exception:
                                     pass
+
+                            # Update end datetime
+                            if enriched.get("end_datetime"):
+                                try:
+                                    from dateutil import parser as dateparser
+                                    end_parsed = dateparser.parse(enriched["end_datetime"], fuzzy=True)
+                                    event.timing.end_datetime = end_parsed
+                                except Exception:
+                                    pass
+
+                            # Update timezone
+                            if enriched.get("timezone"):
+                                event.timing.timezone = enriched["timezone"]
 
                             # Update venue
                             if enriched.get("venue"):
@@ -815,11 +871,33 @@ class AgentOrchestrator:
                                 event.pricing.price_info = price_str
                                 event.pricing.is_free = "free" in price_str.lower()
 
+                            # Update performers
+                            if enriched.get("performers") and not event.performers:
+                                event.performers = [p.strip() for p in enriched["performers"].split(",")]
+
+                            # Update genre
+                            if enriched.get("genre"):
+                                event.genre = enriched["genre"]
+                                if not event.subcategory:
+                                    event.subcategory = enriched["genre"]
+
+                            # Update age restriction
+                            if enriched.get("age_restriction"):
+                                event.age_restriction = self._parse_age_restriction(enriched["age_restriction"])
+
+                            # Update booking URL
+                            if enriched.get("booking_url") and enriched["booking_url"].startswith("http"):
+                                event.pricing.booking_url = enriched["booking_url"]
+
+                            # Update image URL
+                            if enriched.get("image_url") and not event.image_url and enriched["image_url"].startswith("http"):
+                                event.image_url = enriched["image_url"]
+
                             # Update description
                             if enriched.get("description") and not event.description:
                                 event.description = enriched["description"]
 
-                            logger.info(f"[ENRICH] Updated: {event.event_name[:40]}... date={enriched.get('date', '?')} venue={enriched.get('venue', '?')}")
+                            logger.info(f"[ENRICH] Updated: {event.event_name[:40]}... date={enriched.get('date', '?')} venue={enriched.get('venue', '?')} performers={enriched.get('performers', '?')}")
 
                     logger.info(f"[PERPLEXITY ENRICH] Batch result: {enriched_count}/{len(batch)} events enriched")
 
@@ -987,6 +1065,22 @@ class AgentOrchestrator:
                 pass
 
         return EventCategory.COMMUNITY
+
+    @staticmethod
+    def _parse_age_restriction(note: str) -> str:
+        """Parse age restriction from pleaseNote or similar text."""
+        if not note:
+            return "all_ages"
+        note_lower = note.lower()
+        if "21+" in note_lower or "21 and over" in note_lower:
+            return "21+"
+        if "18+" in note_lower or "18 and over" in note_lower:
+            return "18+"
+        if "16+" in note_lower or "16 and over" in note_lower:
+            return "16+"
+        if "all ages" in note_lower or "family" in note_lower or "family-friendly" in note_lower:
+            return "all_ages"
+        return "all_ages"
 
     def _detect_source_api(self, source_url: str) -> DataSource:
         """Detect which API a source URL likely came from."""

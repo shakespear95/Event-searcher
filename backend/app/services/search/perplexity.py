@@ -292,10 +292,17 @@ For EACH event, respond in this EXACT format (one block per event):
 
 **Event name/title**: [name]
 **Specific date**: [e.g. February 27, 2026 — REQUIRED, skip if no date found]
+**End date/time**: [if multi-day or has end time, e.g. March 1, 2026 or 23:00]
 **Time**: [e.g. 19:00 or 7:30 PM]
+**Timezone**: [e.g. CET, EST, Europe/Zurich]
 **Venue name**: [venue]
 **Address**: [street address, city]
 **Price**: [e.g. Free, CHF 45, $25-50]
+**Performers/Artists**: [comma-separated names if applicable]
+**Genre/Type**: [e.g. Rock Concert, Jazz Festival, Art Exhibition]
+**Age restriction**: [e.g. All ages, 18+, Family-friendly]
+**Booking URL**: [direct ticket purchase link if different from source]
+**Image URL**: [main event image URL if visible on the page]
 **Description**: [1-2 sentence description]
 **Source URL**: [the original URL from the list above]
 
@@ -340,11 +347,22 @@ IMPORTANT:
             "name": "name",
             "specific date": "date",
             "date": "date",
+            "end date/time": "end_datetime",
+            "end date": "end_datetime",
             "time": "time",
+            "timezone": "timezone",
             "venue name": "venue",
             "venue": "venue",
             "address": "address",
             "price": "price",
+            "performers/artists": "performers",
+            "performers": "performers",
+            "artists": "performers",
+            "genre/type": "genre",
+            "genre": "genre",
+            "age restriction": "age_restriction",
+            "booking url": "booking_url",
+            "image url": "image_url",
             "description": "description",
             "source url": "source_url",
             "source": "source_url",

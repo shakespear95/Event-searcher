@@ -4,8 +4,6 @@ Enforces structured output (Rule A4).
 """
 from datetime import datetime
 from enum import Enum
-from typing import Literal
-
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
@@ -107,7 +105,10 @@ class EventPricing(BaseModel):
     """Event pricing details."""
 
     price: float | None = None
-    price_currency: str = "EUR"
+    price_min: float | None = None
+    price_max: float | None = None
+    price_currency: str = "USD"
+    price_info: str | None = None
     is_free: bool = False
     price_range: PriceRange = PriceRange.ANY
     booking_required: bool = False
@@ -151,6 +152,12 @@ class EventResult(BaseModel):
     category: EventCategory
     subcategory: str | None = None
     tags: list[str] = Field(default_factory=list)
+    genre: str | None = None
+
+    # Performers & organizer
+    performers: list[str] = Field(default_factory=list)
+    organizer: str | None = None
+    availability_status: str | None = None
 
     # Location
     location: EventLocation
@@ -163,7 +170,7 @@ class EventResult(BaseModel):
 
     # Details
     indoor_outdoor: IndoorOutdoor = IndoorOutdoor.BOTH
-    age_restriction: Literal["all_ages", "18+", "21+", "family"] = "all_ages"
+    age_restriction: str = "all_ages"
     language: str | None = None
     accessibility: bool = False
 

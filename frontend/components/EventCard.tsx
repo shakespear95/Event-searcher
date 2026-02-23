@@ -58,6 +58,9 @@ export function EventCard({
   tickets,
   isFavorite = false,
   onToggleFavorite,
+  performers,
+  genre,
+  availabilityStatus,
 }: EventDisplayProps) {
   const { t, language } = useLanguage()
   const [showDetailModal, setShowDetailModal] = useState(false)
@@ -81,6 +84,9 @@ export function EventCard({
     specialFeature,
     source,
     tickets,
+    performers,
+    genre,
+    availabilityStatus,
   }
 
   return (
@@ -139,6 +145,12 @@ export function EventCard({
                 {title}
               </h3>
 
+              {performers && performers.length > 0 && (
+                <p className="text-xs text-muted-foreground truncate">
+                  {performers.slice(0, 2).join(', ')}
+                </p>
+              )}
+
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
@@ -156,6 +168,11 @@ export function EventCard({
 
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 {price && <div className="text-sm font-semibold text-green-600">{price}</div>}
+                {genre && (
+                  <Badge variant="outline" className="text-xs px-1.5 py-0.5 h-auto">
+                    {genre}
+                  </Badge>
+                )}
               </div>
 
               {specialFeature && (
@@ -233,9 +250,37 @@ export function EventCard({
               </div>
             </div>
 
-            <h3 className="font-semibold text-lg leading-tight line-clamp-2 mb-3 group-hover:text-primary transition-colors">
+            <h3 className="font-semibold text-lg leading-tight line-clamp-2 mb-1 group-hover:text-primary transition-colors">
               {title}
             </h3>
+
+            {performers && performers.length > 0 && (
+              <p className="text-sm text-muted-foreground mb-2 truncate">
+                {performers.slice(0, 3).join(', ')}
+              </p>
+            )}
+
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+              {genre && (
+                <Badge variant="outline" className="text-xs px-2 py-0.5">
+                  {genre}
+                </Badge>
+              )}
+              {availabilityStatus && (
+                <Badge
+                  variant={availabilityStatus === 'onsale' ? 'default' : 'secondary'}
+                  className={`text-xs px-2 py-0.5 ${
+                    availabilityStatus === 'onsale'
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                      : availabilityStatus === 'offsale'
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+                        : ''
+                  }`}
+                >
+                  {availabilityStatus === 'onsale' ? 'On Sale' : availabilityStatus === 'offsale' ? 'Off Sale' : availabilityStatus === 'cancelled' ? 'Cancelled' : availabilityStatus === 'rescheduled' ? 'Rescheduled' : availabilityStatus}
+                </Badge>
+              )}
+            </div>
 
             <div className="space-y-2 mb-3">
               <div className="flex items-center gap-2">

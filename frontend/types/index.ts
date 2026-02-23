@@ -31,11 +31,16 @@ export interface EventTiming {
   start_datetime: string;
   end_datetime?: string;
   timezone: string;
+  duration_hours?: number;
 }
 
 // Event Pricing
 export interface EventPricing {
   price?: number;
+  price_min?: number;
+  price_max?: number;
+  price_currency?: string;
+  price_info?: string;
   is_free: boolean;
   price_range: string;
   booking_url?: string;
@@ -61,13 +66,22 @@ export interface EventResult {
   event_name: string;
   description?: string;
   category: string;
+  subcategory?: string;
+  tags?: string[];
+  genre?: string;
+  performers?: string[];
+  organizer?: string;
+  availability_status?: string;
   location: EventLocation;
   timing: EventTiming;
   pricing: EventPricing;
   indoor_outdoor: string;
+  age_restriction?: string;
+  accessibility?: boolean;
   weather?: EventWeather;
   source: EventSource;
   image_url?: string;
+  images?: string[];
   is_hidden_gem: boolean;
   relevance_score: number;
 }
@@ -154,6 +168,13 @@ export interface EventDisplayProps {
   };
   isFavorite?: boolean;
   onToggleFavorite?: () => void;
+  // Rich metadata
+  performers?: string[];
+  genre?: string;
+  priceRange?: string;
+  bookingUrl?: string;
+  availabilityStatus?: string;
+  images?: string[];
 }
 
 // Translation keys
