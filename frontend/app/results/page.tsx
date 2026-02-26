@@ -2,9 +2,15 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { Header } from '@/components/Header'
 import { EventCard } from '@/components/EventCard'
-import { MapView } from '@/components/MapView'
+
+// Leaflet requires browser APIs — must disable SSR
+const MapView = dynamic(
+  () => import('@/components/MapView').then(mod => ({ default: mod.MapView })),
+  { ssr: false, loading: () => <div className="w-full h-[600px] bg-slate-100 rounded-lg flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div> }
+)
 import { searchEvents, getFavorites, addFavorite, removeFavorite } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { computeDateRange, mapPriceRangeToBackend, mapCategoryToBackend, getCategoryImage } from '@/lib/utils'
@@ -152,7 +158,9 @@ function ResultsContent() {
   // Convert EventResult to EventDisplayProps
   const mapEventToDisplay = (event: EventResult): EventDisplayProps => {
     const startDate = new Date(event.timing.start_datetime)
-    const timeStr = startDate.toTimeString().slice(0, 5)
+    const rawTime = startDate.toTimeString().slice(0, 5)
+    // Don't show "00:00" — that's a default/placeholder time, not a real midnight event
+    const timeStr = rawTime === '00:00' ? undefined : rawTime
 
     // Build display price string
     const currency = event.pricing.price_currency || 'USD'

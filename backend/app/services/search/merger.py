@@ -343,18 +343,48 @@ class SearchMerger:
 
             merged.total_raw_results += len(serpapi_result.results)
 
-            # Also include Google Events results
+            # Also include Google Events results (with structured venue/date data)
             for event in serpapi_result.events:
                 event_url = event.get("link", "")
                 event_title = event.get("title", "")
 
                 if event_url and not self._is_duplicate(event_url, event_title):
+                    # Extract structured data from Google Events
+                    date_info = event.get("date", {})
+                    date_when = date_info.get("when") if isinstance(date_info, dict) else date_info
+                    date_start = date_info.get("start_date") if isinstance(date_info, dict) else None
+
+                    # Google Events venue info is in address field
+                    venue_info = event.get("venue", {}) if isinstance(event.get("venue"), dict) else {}
+                    event_address = event.get("address", [])
+                    address_str = ", ".join(event_address) if isinstance(event_address, list) else str(event_address) if event_address else ""
+
+                    # Build rich snippet
+                    snippet_parts = []
+                    if date_when:
+                        snippet_parts.append(f"Date: {date_when}")
+                    if venue_info.get("name"):
+                        snippet_parts.append(f"Venue: {venue_info['name']}")
+                    if address_str:
+                        snippet_parts.append(f"Address: {address_str}")
+                    desc = event.get("description", "")
+                    if desc:
+                        snippet_parts.append(desc)
+
+                    serpapi_event_data = {
+                        **event,
+                        "date": date_start or date_when,
+                        "date_when": date_when,
+                        "venue_name": venue_info.get("name") if venue_info else None,
+                        "venue_address": address_str or None,
+                    }
+
                     result = MergedResult(
                         title=event_title,
                         url=event_url,
-                        snippet=event.get("description", ""),
+                        snippet=" | ".join(snippet_parts) if snippet_parts else desc,
                         sources=["serpapi_events"],
-                        serpapi_data=event,
+                        serpapi_data=serpapi_event_data,
                         confidence_score=0.8,  # Google Events are high quality
                     )
                     results.append(result)
@@ -508,6 +538,8 @@ class SearchMerger:
                             "venue_address": event.venue_address,
                             "venue_city": event.venue_city,
                             "venue_country": event.venue_country,
+                            "venue_latitude": event.venue_latitude,
+                            "venue_longitude": event.venue_longitude,
                             "price_min": event.price_min,
                             "price_max": event.price_max,
                             "price_currency": event.price_currency,

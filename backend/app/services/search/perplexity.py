@@ -283,34 +283,36 @@ List as many events as you can find (aim for 15-20+). Each event MUST have a con
         urls_text = "\n".join(url_list)
 
         enrich_query = f"""I have {len(events_data)} event page URLs for events in/near {location} ({date_range}).
-For EACH URL below, research the page and extract the actual event details.
+Research EACH URL and extract the actual event details. I need COMPLETE, SPECIFIC information.
 
 URLs to research:
 {urls_text}
 
-For EACH event, respond in this EXACT format (one block per event):
+For EACH event, respond in this EXACT format (one block per event, keep the bold field labels exactly as shown):
 
-**Event name/title**: [name]
-**Specific date**: [e.g. February 27, 2026 — REQUIRED, skip if no date found]
+**Event name/title**: [the full official event name — NOT a generic description]
+**Specific date**: [REQUIRED — e.g. February 27, 2026. SKIP THIS EVENT ENTIRELY if no date found]
+**Time**: [REQUIRED — e.g. 19:00 or 7:30 PM. Write "TBA" only if the page explicitly says TBA]
 **End date/time**: [if multi-day or has end time, e.g. March 1, 2026 or 23:00]
-**Time**: [e.g. 19:00 or 7:30 PM]
-**Timezone**: [e.g. CET, EST, Europe/Zurich]
-**Venue name**: [venue]
-**Address**: [street address, city]
-**Price**: [e.g. Free, CHF 45, $25-50]
-**Performers/Artists**: [comma-separated names if applicable]
-**Genre/Type**: [e.g. Rock Concert, Jazz Festival, Art Exhibition]
+**Timezone**: [e.g. CET, EST, Europe/Zurich — default to local timezone of {location}]
+**Venue name**: [REQUIRED — the specific venue/location name where the event takes place]
+**Address**: [full street address including city, e.g. "Stauffacherstrasse 60, 8004 Zurich"]
+**Price**: [e.g. Free, CHF 45, $25-50, EUR 30. Include currency]
+**Performers/Artists**: [comma-separated full names if applicable]
+**Genre/Type**: [e.g. Rock Concert, Jazz Festival, Art Exhibition, Food Market]
 **Age restriction**: [e.g. All ages, 18+, Family-friendly]
-**Booking URL**: [direct ticket purchase link if different from source]
+**Booking URL**: [direct ticket purchase link if different from source URL]
 **Image URL**: [main event image URL if visible on the page]
-**Description**: [1-2 sentence description]
-**Source URL**: [the original URL from the list above]
+**Description**: [2-3 sentence description of what the event is about]
+**Source URL**: [the EXACT original URL from my list above — REQUIRED for matching]
 
-IMPORTANT:
-- Research EACH URL and extract real data — do NOT make up information
-- If a URL is a listing page (not a specific event), extract the FIRST upcoming event from that listing
-- Skip URLs that have no event data at all
-- Include the Source URL so I can match results back"""
+CRITICAL RULES:
+- Research EACH URL thoroughly — do NOT make up or guess information
+- SKIP any URL where you cannot find a specific date — do not include dateless events
+- Every event MUST have: name, date, time, venue name, and source URL
+- If a URL is a listing page, extract the FIRST upcoming event with a specific date
+- Include the Source URL EXACTLY as I provided it so I can match results back
+- Prefer specific details over vague ones (e.g. "Tonhalle Zurich" not just "concert hall")"""
 
         try:
             result = await self.search(query=enrich_query, location=location)

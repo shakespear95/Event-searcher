@@ -32,6 +32,9 @@ class TicketmasterEvent:
     category: str | None = None
     source: str = "ticketmaster"
     raw_data: dict[str, Any] | None = None
+    # Venue coordinates
+    venue_latitude: float | None = None
+    venue_longitude: float | None = None
     # Rich metadata
     performers: list[str] = field(default_factory=list)
     genre: str | None = None
@@ -182,6 +185,20 @@ class TicketmasterSearch:
                 accessibility_data = item.get("accessibility", {})
                 accessibility_info = accessibility_data.get("info") if accessibility_data else None
 
+                # Extract venue coordinates
+                venue_location = venue.get("location", {})
+                venue_lat = None
+                venue_lng = None
+                if venue_location:
+                    try:
+                        lat_str = venue_location.get("latitude")
+                        lng_str = venue_location.get("longitude")
+                        if lat_str and lng_str:
+                            venue_lat = float(lat_str)
+                            venue_lng = float(lng_str)
+                    except (ValueError, TypeError):
+                        pass
+
                 # All images (not just highest-res)
                 all_images = [{"url": img.get("url"), "width": img.get("width", 0), "height": img.get("height", 0), "ratio": img.get("ratio", "")} for img in images if img.get("url")]
 
@@ -194,6 +211,8 @@ class TicketmasterSearch:
                     venue_address=venue.get("address", {}).get("line1"),
                     venue_city=venue.get("city", {}).get("name"),
                     venue_country=venue.get("country", {}).get("name"),
+                    venue_latitude=venue_lat,
+                    venue_longitude=venue_lng,
                     price_min=price_range.get("min"),
                     price_max=price_range.get("max"),
                     price_currency=price_range.get("currency"),

@@ -16,6 +16,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+import httpx
+
 from app.core.logging import get_logger
 from app.schemas.event import EventResult, DataSource, EventSource, WeatherStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchMetadata
@@ -96,6 +98,73 @@ class AgentOrchestrator:
         self.merger = SearchMerger()
         self.scraper: ScraperEngine | None = None
 
+    async def _geocode_events(self, events: list[EventResult]) -> None:
+        """Add coordinates to events that have venue/city but no coordinates.
+        Uses OpenStreetMap Nominatim (free, no API key needed).
+        Limited to top 15 events and 15s total timeout to avoid blocking the pipeline."""
+        events_needing_coords = [
+            e for e in events
+            if e.location.coordinates is None and (e.location.venue_name or e.location.city)
+        ]
+        if not events_needing_coords:
+            return
+
+        # Limit to top 15 events to respect Nominatim rate limit (1 req/sec)
+        max_geocode = 15
+        events_to_geocode = events_needing_coords[:max_geocode]
+        logger.info(f"[GEOCODE] Geocoding {len(events_to_geocode)}/{len(events_needing_coords)} events without coordinates")
+
+        # Cache to avoid duplicate geocoding for same venue+city
+        geocode_cache: dict[str, tuple[float, float] | None] = {}
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for event in events_to_geocode:
+                    # Build query: prefer "venue, city, country" for accuracy
+                    parts = []
+                    if event.location.venue_name:
+                        parts.append(event.location.venue_name)
+                    parts.append(event.location.city)
+                    if event.location.country:
+                        parts.append(event.location.country)
+                    query = ", ".join(parts)
+
+                    if query in geocode_cache:
+                        coords = geocode_cache[query]
+                        if coords:
+                            event.location.coordinates = coords
+                        continue
+
+                    try:
+                        resp = await client.get(
+                            "https://nominatim.openstreetmap.org/search",
+                            params={"q": query, "format": "json", "limit": "1"},
+                            headers={"User-Agent": "EventSearcher/1.0"},
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if data:
+                                lat = float(data[0]["lat"])
+                                lon = float(data[0]["lon"])
+                                event.location.coordinates = (lat, lon)
+                                geocode_cache[query] = (lat, lon)
+                            else:
+                                geocode_cache[query] = None
+                        else:
+                            geocode_cache[query] = None
+                    except Exception as e:
+                        logger.debug(f"[GEOCODE] Failed for '{query}': {e}")
+                        geocode_cache[query] = None
+
+                    # Respect Nominatim rate limit: max 1 request per second
+                    await asyncio.sleep(1.0)
+
+        except Exception as e:
+            logger.warning(f"[GEOCODE] Geocoding aborted: {e}")
+
+        geocoded = sum(1 for e in events_to_geocode if e.location.coordinates is not None)
+        logger.info(f"[GEOCODE] Geocoded {geocoded}/{len(events_to_geocode)} events")
+
     async def _init_scraper(self) -> None:
         """Initialize scraper lazily."""
         if not SCRAPER_AVAILABLE:
@@ -143,6 +212,12 @@ class AgentOrchestrator:
             # Phase 4: Process with Gemini
             state.set_phase(AgentPhase.PROCESSING)
             events = await self._process_results(merged_results, request, state)
+
+            # Phase 4.5: Geocode events that are missing coordinates (15s timeout)
+            try:
+                await asyncio.wait_for(self._geocode_events(events), timeout=20.0)
+            except asyncio.TimeoutError:
+                logger.warning("[GEOCODE] Timed out — proceeding without full coordinates")
 
             # Phase 5: Weather check for outdoor events
             if request.weather_safe and request.indoor_outdoor != "indoor":
@@ -506,11 +581,14 @@ class AgentOrchestrator:
             is_free = False
             price_min = data.get("price_min")
             price_max = data.get("price_max")
+            price_currency = data.get("price_currency") or "USD"
+            currency_symbols = {"USD": "$", "EUR": "€", "GBP": "£", "CHF": "CHF "}
+            curr_symbol = currency_symbols.get(price_currency, f"{price_currency} ")
             price_info = None
             if price_min is not None:
-                price_info = f"${price_min}"
+                price_info = f"{curr_symbol}{price_min}"
                 if price_max and price_max != price_min:
-                    price_info += f" - ${price_max}"
+                    price_info += f" - {curr_symbol}{price_max}"
 
             # Source API
             source_api = self._detect_source_api(result.url)
@@ -538,6 +616,7 @@ class AgentOrchestrator:
                     address=data.get("venue_address"),
                     city=data.get("venue_city") or request.location.split(",")[0].strip(),
                     country=data.get("venue_country") or (request.location.split(",")[-1].strip() if "," in request.location else "Unknown"),
+                    coordinates=(float(data["venue_latitude"]), float(data["venue_longitude"])) if data.get("venue_latitude") and data.get("venue_longitude") else None,
                 ),
                 timing=EventTiming(
                     start_datetime=parsed_dt,
@@ -636,18 +715,37 @@ class AgentOrchestrator:
                 except Exception:
                     pass
 
+            # Track whether we actually parsed a real date
+            has_parsed_date = parsed_dt is not None
+
             # Default to request date if nothing found
             if not parsed_dt:
                 parsed_dt = datetime.combine(request.date_from, datetime.min.time())
 
             # --- Parse venue ---
             venue_name = data.get("venue_name") or None
+            venue_address = data.get("venue_address") or None
             # Try to extract venue from snippet if not in structured data
             if not venue_name and result.snippet:
                 import re
                 venue_match = re.search(r'Venue:\s*([^|,\n]+)', result.snippet)
                 if venue_match:
                     venue_name = venue_match.group(1).strip()
+            if not venue_address and result.snippet:
+                import re
+                addr_match = re.search(r'Address:\s*([^|,\n]+)', result.snippet)
+                if addr_match:
+                    venue_address = addr_match.group(1).strip()
+
+            # --- Parse coordinates ---
+            coordinates = None
+            lat = data.get("venue_latitude")
+            lng = data.get("venue_longitude")
+            if lat is not None and lng is not None:
+                try:
+                    coordinates = (float(lat), float(lng))
+                except (ValueError, TypeError):
+                    pass
 
             # --- Category ---
             category = self._map_category(data.get("category"), request.category)
@@ -656,11 +754,14 @@ class AgentOrchestrator:
             is_free = False
             price_min = data.get("price_min")
             price_max = data.get("price_max")
+            price_currency = data.get("price_currency") or "USD"
+            currency_symbols = {"USD": "$", "EUR": "€", "GBP": "£", "CHF": "CHF "}
+            curr_symbol = currency_symbols.get(price_currency, f"{price_currency} ")
             price_info = None
             if price_min is not None:
-                price_info = f"${price_min}"
+                price_info = f"{curr_symbol}{price_min}"
                 if price_max and price_max != price_min:
-                    price_info += f" - ${price_max}"
+                    price_info += f" - {curr_symbol}{price_max}"
             elif result.snippet:
                 import re
                 price_match = re.search(r'Price:\s*([^|,\n]+)', result.snippet)
@@ -681,22 +782,28 @@ class AgentOrchestrator:
             all_images_raw = data.get("all_images", [])
             image_urls = [img["url"] for img in all_images_raw if isinstance(img, dict) and img.get("url")]
 
+            # Include _has_parsed_date marker in tags for completeness detection
+            internal_tags = list(tags)
+            if has_parsed_date:
+                internal_tags.append("_has_parsed_date")
+
             event = EventResult(
                 event_id=f"evt_{uuid.uuid4().hex[:8]}",
                 event_name=event_name,
                 description=data.get("description") or result.snippet or None,
                 category=category,
                 subcategory=data.get("subgenre") or data.get("genre"),
-                tags=tags,
+                tags=internal_tags,
                 genre=data.get("genre"),
                 performers=data.get("performers", []),
                 organizer=data.get("promoter"),
                 availability_status=data.get("on_sale_status"),
                 location=EventLocation(
                     venue_name=venue_name,
-                    address=data.get("venue_address"),
+                    address=venue_address,
                     city=data.get("venue_city") or city,
                     country=data.get("venue_country") or country,
+                    coordinates=coordinates,
                 ),
                 timing=EventTiming(
                     start_datetime=parsed_dt,
@@ -765,20 +872,14 @@ class AgentOrchestrator:
         events_needing_enrichment = []
         events_complete = []
         for event in all_events:
-            has_real_date = True
-            # Check if date is just the default (request.date_from)
-            if event.timing.start_datetime:
-                event_date = event.timing.start_datetime
-                if isinstance(event_date, datetime):
-                    event_date = event_date.date()
-                if event_date == request.date_from and event_date == event.timing.start_datetime.date() if isinstance(event.timing.start_datetime, datetime) else True:
-                    # Could be default — check if we actually parsed a date
-                    has_real_date = bool(event.location.venue_name)  # proxy: if no venue either, likely no data
+            # Use the _has_parsed_date marker instead of broken proxy logic
+            has_real_date = "_has_parsed_date" in event.tags
+            has_venue = bool(event.location.venue_name)
 
-            if not has_real_date or not event.location.venue_name:
-                events_needing_enrichment.append(event)
-            else:
+            if has_real_date and has_venue:
                 events_complete.append(event)
+            else:
+                events_needing_enrichment.append(event)
 
         logger.info(f"[PROCESSING] Complete events: {len(events_complete)}, Need enrichment: {len(events_needing_enrichment)}")
 
@@ -918,10 +1019,43 @@ class AgentOrchestrator:
                     )
 
         # Combine complete + enriched events
-        final_events = events_complete + events_needing_enrichment
+        all_final = events_complete + events_needing_enrichment
+
+        # Strip internal tags and apply quality gates
+        quality_events = []
+        low_quality_events = []
+        for event in all_final:
+            # Remove internal marker tags
+            event.tags = [t for t in event.tags if not t.startswith("_")]
+
+            # Quality scoring: events with real data rank higher
+            has_venue = bool(event.location.venue_name)
+            has_real_name = not event.event_name.startswith("Event in ")
+            has_real_time = event.timing.start_datetime.time() != datetime.min.time()
+            has_coordinates = event.location.coordinates is not None
+
+            quality_score = sum([has_venue, has_real_name, has_real_time, has_coordinates])
+
+            if has_real_name and (has_venue or has_real_time):
+                # Good quality: has a real name AND at least venue or time
+                event.relevance_score = min(event.relevance_score + (quality_score * 0.05), 1.0)
+                quality_events.append(event)
+            elif has_real_name:
+                # Medium quality: has a real name but missing venue and time
+                low_quality_events.append(event)
+            else:
+                # Low quality: generic name — only include if we need to fill results
+                low_quality_events.append(event)
+
+        # Sort quality events by relevance score (best first)
+        quality_events.sort(key=lambda e: e.relevance_score, reverse=True)
+        low_quality_events.sort(key=lambda e: e.relevance_score, reverse=True)
+
+        # Combine: quality first, then fill with lower quality if needed
+        final_events = quality_events + low_quality_events
 
         logger.info(f"========== PROCESSING COMPLETE ==========")
-        logger.info(f"[PROCESSING] Final event count: {len(final_events)}")
+        logger.info(f"[PROCESSING] Final: {len(quality_events)} quality + {len(low_quality_events)} lower quality = {len(final_events)} total")
         return final_events[:request.results_count]
 
     def _parse_events_from_perplexity(self, content: str) -> list[dict[str, str]]:
