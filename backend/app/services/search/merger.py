@@ -57,7 +57,42 @@ class SearchMerger:
     - URL normalization for deduplication
     - Source tracking for traceability
     - Confidence scoring based on multiple sources
+    - Filtering out listing/index pages that aren't specific events
     """
+
+    # URL patterns that indicate listing/index pages, not specific events
+    LISTING_PAGE_PATTERNS = [
+        r'/events/?$',
+        r'/events/?\?',
+        r'/d/[^/]+/events/?',          # eventbrite.com/d/.../events/
+        r'/d/[^/]+/free--events/?',     # eventbrite.com/d/.../free--events/
+        r'/d/[^/]+/[^/]+/$',           # eventbrite.com/d/.../category/
+        r'/whats-on/?$',
+        r'/what-to-do/?$',
+        r'/things-to-do/?$',
+        r'/calendar/?$',
+        r'/events/month/',
+        r'/events/week/',
+        r'/sitesearch/',
+        r'/search\?',
+        r'/island/[^/]+$',             # islandsevents.com/island/mallorca (index)
+    ]
+
+    def _is_listing_page(self, url: str) -> bool:
+        """Check if a URL is a listing/index page rather than a specific event."""
+        parsed = urlparse(url)
+        path = parsed.path.rstrip("/")
+
+        # Very short paths are usually index pages
+        if path.count("/") <= 1:
+            return True
+
+        # Check against known listing patterns
+        for pattern in self.LISTING_PAGE_PATTERNS:
+            if re.search(pattern, url, re.IGNORECASE):
+                return True
+
+        return False
 
     def __init__(self):
         self.seen_urls: set[str] = set()
@@ -262,8 +297,13 @@ class SearchMerger:
         # === Process Perplexity sources first ===
         perplexity_added = 0
         perplexity_duped = 0
+        listing_filtered = 0
         if perplexity_result and perplexity_result.success:
             for idx, source_url in enumerate(perplexity_result.sources):
+                if self._is_listing_page(source_url):
+                    listing_filtered += 1
+                    logger.debug(f"[MERGER] Filtered listing page: {source_url}")
+                    continue
                 if not self._is_duplicate(source_url, ""):
                     # Try to match a parsed event to this source URL
                     title = ""
@@ -321,6 +361,9 @@ class SearchMerger:
                     }
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
                     serpapi_enriched += 1
+                elif self._is_listing_page(item.link):
+                    listing_filtered += 1
+                    continue
                 elif not self._is_duplicate(item.link, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -348,7 +391,11 @@ class SearchMerger:
                 event_url = event.get("link", "")
                 event_title = event.get("title", "")
 
-                if event_url and not self._is_duplicate(event_url, event_title):
+                if not event_url or self._is_listing_page(event_url):
+                    if event_url:
+                        listing_filtered += 1
+                    continue
+                if not self._is_duplicate(event_url, event_title):
                     # Extract structured data from Google Events
                     date_info = event.get("date", {})
                     date_when = date_info.get("when") if isinstance(date_info, dict) else date_info
@@ -412,6 +459,9 @@ class SearchMerger:
                     existing.sources.append("serper")
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
                     serper_enriched += 1
+                elif self._is_listing_page(item.link):
+                    listing_filtered += 1
+                    continue
                 elif not self._is_duplicate(item.link, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -447,6 +497,9 @@ class SearchMerger:
                     if item.content and len(item.content) > len(existing.snippet or ""):
                         existing.snippet = item.content[:500]
                     firecrawl_enriched += 1
+                elif self._is_listing_page(item.url):
+                    listing_filtered += 1
+                    continue
                 elif not self._is_duplicate(item.url, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -479,6 +532,9 @@ class SearchMerger:
                     existing.sources.append("exa")
                     existing.confidence_score = min(existing.confidence_score + 0.2, 1.0)
                     exa_enriched += 1
+                elif self._is_listing_page(item.url):
+                    listing_filtered += 1
+                    continue
                 elif not self._is_duplicate(item.url, item.title):
                     result = MergedResult(
                         title=item.title,
@@ -580,6 +636,7 @@ class SearchMerger:
         logger.info("MERGER OUTPUT SUMMARY")
         logger.info("=" * 60)
         logger.info(f"  Total raw inputs:     {merged.total_raw_results}")
+        logger.info(f"  Listing pages filtered: {listing_filtered}")
         logger.info(f"  After dedup:          {total_before_cap}")
         if total_before_cap > max_results:
             logger.info(f"  After max_results cap ({max_results}): {len(merged.results)}  ** {total_before_cap - max_results} results DROPPED by cap **")

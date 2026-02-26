@@ -93,11 +93,31 @@ class TicketmasterSearch:
             return "CH"
         return None
 
+    # City -> (latitude, longitude) for places where city-name search is unreliable
+    CITY_COORDINATES = {
+        "palma de mallorca": (39.5696, 2.6502),
+        "palma": (39.5696, 2.6502),
+        "ibiza": (38.9067, 1.4206),
+        "tenerife": (28.4636, -16.2518),
+        "las palmas": (28.1235, -15.4363),
+        "gran canaria": (28.1235, -15.4363),
+        "lanzarote": (28.9638, -13.5477),
+        "fuerteventura": (28.3587, -14.0537),
+        "menorca": (39.9496, 4.1105),
+        "malta": (35.8997, 14.5146),
+        "valletta": (35.8997, 14.5146),
+        "cork": (51.8985, -8.4756),
+        "nice": (43.7102, 7.2620),
+        "monaco": (43.7384, 7.4246),
+    }
+
     async def search(
         self,
         keyword: str,
         city: str | None = None,
         country_code: str | None = None,
+        latlong: str | None = None,
+        radius: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         size: int = 50,
@@ -109,6 +129,7 @@ class TicketmasterSearch:
                 "keyword": keyword[:100],
                 "city": city,
                 "country_code": country_code,
+                "latlong": latlong,
                 "start_date": start_date,
                 "size": size,
             },
@@ -120,7 +141,12 @@ class TicketmasterSearch:
             "size": str(size),
             "sort": "date,asc",
         }
-        if city:
+        # Prefer latlong search for geographic accuracy (esp. islands)
+        if latlong:
+            params["latlong"] = latlong
+            params["radius"] = radius or "50"
+            params["unit"] = "km"
+        elif city:
             params["city"] = city
         if country_code:
             params["countryCode"] = country_code
@@ -281,21 +307,31 @@ class TicketmasterSearch:
         city = location.split(",")[0].strip() if location else None
         country_code = self._extract_country_code(location)
 
+        # Check if we have coordinates for this city (better for islands/specific locations)
+        latlong = None
+        city_lower = city.lower() if city else ""
+        if city_lower in self.CITY_COORDINATES:
+            lat, lng = self.CITY_COORDINATES[city_lower]
+            latlong = f"{lat},{lng}"
+            logger.info(f"[TICKETMASTER] Using latlong={latlong} for '{city}' (geographic search)")
+
         # First search: city + category keyword
         keyword = category if category and category != "all" else ""
-        logger.info(f"[TICKETMASTER] search_events keyword='{keyword}', city={city}, country={country_code}")
+        logger.info(f"[TICKETMASTER] search_events keyword='{keyword}', city={city}, country={country_code}, latlong={latlong}")
 
-        # Search 1: City-level with category
+        # Search 1: Prefer latlong for accuracy, fall back to city name
         result = await self.search(
             keyword=keyword,
-            city=city,
+            city=city if not latlong else None,
             country_code=country_code,
+            latlong=latlong,
+            radius="50",
             start_date=date_from,
             end_date=date_to,
             size=50,
         )
 
-        # Search 2: If city search returned few results, broaden to country-level
+        # Search 2: If latlong/city search returned few results, broaden to country-level
         if len(result.events) < 15 and country_code:
             logger.info(f"[TICKETMASTER] City search returned only {len(result.events)}, broadening to country={country_code}")
             broader = await self.search(

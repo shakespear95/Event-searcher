@@ -715,6 +715,26 @@ class AgentOrchestrator:
                 except Exception:
                     pass
 
+            # Try parsing date from URL (e.g., palma-08-02-2026 or event-2026-03-15)
+            if not parsed_dt and result.url:
+                try:
+                    import re
+                    from dateutil import parser as dateparser
+                    # Match dd-mm-yyyy or yyyy-mm-dd in URL paths
+                    url_date_patterns = re.findall(
+                        r'(\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})',
+                        result.url,
+                    )
+                    for url_date in url_date_patterns:
+                        try:
+                            parsed_dt = dateparser.parse(url_date, dayfirst=True)
+                            if parsed_dt:
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
             # Track whether we actually parsed a real date
             has_parsed_date = parsed_dt is not None
 
@@ -887,8 +907,8 @@ class AgentOrchestrator:
         if events_needing_enrichment:
             date_range = f"{request.date_from} to {request.date_to}" if request.date_to else str(request.date_from)
 
-            # Batch enrichment — 15 per Perplexity call max
-            batch_size = 15
+            # Batch enrichment — 8 per Perplexity call (smaller batches = better per-event research)
+            batch_size = 8
             for batch_start in range(0, len(events_needing_enrichment), batch_size):
                 batch = events_needing_enrichment[batch_start:batch_start + batch_size]
                 batch_data = [
@@ -908,20 +928,32 @@ class AgentOrchestrator:
                         date_range=date_range,
                     )
 
-                    # Match enriched data back to events by URL
+                    # Match enriched data back to events by URL (normalized)
+                    def _normalize_match_url(url: str) -> str:
+                        """Normalize URL for matching: strip protocol, www, trailing slash, query params."""
+                        from urllib.parse import urlparse
+                        parsed = urlparse(url)
+                        return f"{parsed.netloc.replace('www.', '')}{parsed.path.rstrip('/')}".lower()
+
                     url_to_enriched = {}
                     for enriched in enriched_list:
                         src_url = enriched.get("source_url", "")
                         if src_url:
+                            url_to_enriched[_normalize_match_url(src_url)] = enriched
+                            # Also store raw URL for exact match
                             url_to_enriched[src_url] = enriched
 
                     enriched_count = 0
                     for event in batch:
-                        enriched = url_to_enriched.get(event.source.source_url)
+                        event_url_norm = _normalize_match_url(str(event.source.source_url))
+                        enriched = url_to_enriched.get(str(event.source.source_url))
                         if not enriched:
-                            # Try partial URL match
+                            enriched = url_to_enriched.get(event_url_norm)
+                        if not enriched:
+                            # Try domain+path-segment matching as last resort
                             for url_key, enr_data in url_to_enriched.items():
-                                if url_key in event.source.source_url or event.source.source_url in url_key:
+                                key_norm = _normalize_match_url(url_key) if url_key.startswith("http") else url_key
+                                if key_norm == event_url_norm:
                                     enriched = enr_data
                                     break
 
